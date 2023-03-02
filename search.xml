@@ -1,65 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <search>
   <entry>
-    <title>Seata AT模式源码解析</title>
-    <url>/2022/11/27/Seata-AT%E6%A8%A1%E5%BC%8F%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/</url>
-    <content><![CDATA[<h1 id="1-AT模式的特性"><a href="#1-AT模式的特性" class="headerlink" title="1.AT模式的特性"></a>1.AT模式的特性</h1><h2 id="1-1-前提"><a href="#1-1-前提" class="headerlink" title="1.1 前提"></a>1.1 前提</h2><p>AT模式生效需要两个前提：</p>
-<ul>
-<li>基于支持本地ACID事务的关系型数据库</li>
-<li>Java应用，通过JDBC访问数据库</li>
-</ul>
-<h2 id="1-2-整体机制"><a href="#1-2-整体机制" class="headerlink" title="1.2 整体机制"></a>1.2 整体机制</h2><p>两阶段提交协议的演变：</p>
-<ul>
-<li>一阶段：业务数据和回滚日志记录在同一个本地事务中提交，释放本地锁和连接资源。</li>
-<li>二阶段：<ul>
-<li>提交异步化，非常快速地完成。</li>
-<li>回滚通过一阶段的回滚日志进行反向补偿。</li>
-</ul>
-</li>
-</ul>
-<h2 id="1-3-写隔离"><a href="#1-3-写隔离" class="headerlink" title="1.3 写隔离"></a>1.3 写隔离</h2><ul>
-<li>一阶段本地事务提交前，需要确保先拿到 <strong>全局锁</strong> 。</li>
-<li>拿不到 <strong>全局锁</strong> ，不能提交本地事务。</li>
-<li>拿 <strong>全局锁</strong> 的尝试被限制在一定范围内，超出范围将放弃，并回滚本地事务，释放本地锁。</li>
-</ul>
-<h2 id="1-4-读隔离"><a href="#1-4-读隔离" class="headerlink" title="1.4 读隔离"></a>1.4 读隔离</h2><p>在数据库本地事务隔离级别 <strong>读已提交（Read Committed）</strong> 或以上的基础上，Seata（AT 模式）的默认全局隔离级别是 <strong>读未提交（Read Uncommitted）</strong> 。</p>
-<p>如果应用在特定场景下，必需要求全局的 <strong>读已提交</strong> ，目前 Seata 的方式是通过 SELECT FOR UPDATE 语句的代理。</p>
-<h1 id="2-源码梳理"><a href="#2-源码梳理" class="headerlink" title="2. 源码梳理"></a>2. 源码梳理</h1><blockquote>
-<p>源码版本 1.5.2</p>
-</blockquote>
-<h2 id="2-1-TM及RM初始化"><a href="#2-1-TM及RM初始化" class="headerlink" title="2.1 TM及RM初始化"></a>2.1 TM及RM初始化</h2><p>TM和RM（Client端）由业务系统集成，AT模式下，在处理TC（Server端）发过来的请求时，这俩角色发挥着主要作用。所以从GlobalTransactionScanner中两者的初始化开始说起。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127212033165.png" alt="image-20221127212033165"></p>
-<p>启动的时候，会调用GlobalTransactionScanner#initClient()方法，在initClient()中初始化TM和RM。</p>
-<p>TM和RM初始化，主要是注册各种处理器，最终构造一个处理器映射表：</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213129581.png" alt="image-20221127213129581"></p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213354445.png" alt="image-20221127213354445"></p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213428347.png" alt="image-20221127213428347"></p>
-<p>RM注册处理器逻辑相同，这里不多展示。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213557337.png" alt="image-20221127213557337"></p>
-<p>需要关注的是RM初始化时，在注册各种处理器之前还有两个操作：</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127214227198.png" alt="image-20221127214227198"></p>
-<p>RM初始化时，先是设置了 ResourceManager 和 TransactionMessageHandler，之后也是如TM初始化一样注册各种处理器，有区别的是注册处理器流程中，RM是注册完三个特有的客户端之后，才执行与TM类似的注册流程。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127222604783.png" alt="image-20221127222604783"></p>
-<p>真正处理请求的还是靠调用各个处理器中的handler.onRequest()方法，于是问题的关键就很明显了，就在于handler。</p>
-<h2 id="2-2-ResourceManager"><a href="#2-2-ResourceManager" class="headerlink" title="2.2 ResourceManager"></a>2.2 ResourceManager</h2><p>在了解ResourceManager之前，需要先了解下ResourceManagerInbound和ResourceManagerOutbound。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129230253020.png" alt="image-20221129230253020"></p>
-<p>ResourceManagerInbound是处理接收到TC的请求的，是TC向RM发请求</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129230822733.png" alt="image-20221129230822733"></p>
-<p>ResourceManagerOutbound是处理流出的消息的，是RM向TC发请求</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129232244968.png" alt="image-20221129232244968"></p>
-<p>ResourceManager继承了二者，所以既负责向TC发请求，又负责接收从TC来的请求。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129234706090.png" alt="image-20221129234706090"></p>
-<p>DefaultResourceManager.get()得到的是一个单例DefaultResourceManager，创建DefaultResourceManager的时候会构建一个分支类型为ResourceManager的一个Map。</p>
-]]></content>
-      <categories>
-        <category>技术</category>
-      </categories>
-      <tags>
-        <tag>seata</tag>
-        <tag>分布式事务</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Java的7种阻塞队列及其实现原理</title>
     <url>/2023/02/27/Java%E7%9A%847%E7%A7%8D%E9%98%BB%E5%A1%9E%E9%98%9F%E5%88%97%E5%8F%8A%E5%85%B6%E5%AE%9E%E7%8E%B0%E5%8E%9F%E7%90%86/</url>
     <content><![CDATA[<h1 id="队列和阻塞队列"><a href="#队列和阻塞队列" class="headerlink" title="队列和阻塞队列"></a>队列和阻塞队列</h1><h2 id="队列"><a href="#队列" class="headerlink" title="队列"></a>队列</h2><p>队列（<code>Queue</code>）是一种经常使用的集合。<code>Queue</code> 实际上是实现了一个先进先出（FIFO：First In First Out）的有序表。和 List、Set 一样都继承自 Collection。它和 <code>List</code> 的区别在于，<code>List</code>可以在任意位置添加和删除元素，而<code>Queue</code> 只有两个操作：</p>
@@ -245,59 +186,55 @@
       </tags>
   </entry>
   <entry>
-    <title>Seata源码结构及事务模式介绍</title>
-    <url>/2023/01/30/Seata%E6%BA%90%E7%A0%81%E7%BB%93%E6%9E%84%E5%8F%8A%E4%BA%8B%E5%8A%A1%E6%A8%A1%E5%BC%8F%E4%BB%8B%E7%BB%8D/</url>
-    <content><![CDATA[<h1 id="1-Seata是什么"><a href="#1-Seata是什么" class="headerlink" title="1.Seata是什么"></a>1.Seata是什么</h1><p>Seata 是一款开源的分布式事务解决方案，致力于提供高性能和简单易用的分布式事务服务。Seata 将为用户提供了 AT、TCC、SAGA 和 XA 事务模式，为用户打造一站式的分布式解决方案。</p>
-<h1 id="2-Seata体系中的三个组件"><a href="#2-Seata体系中的三个组件" class="headerlink" title="2.Seata体系中的三个组件"></a>2.Seata体系中的三个组件</h1><span id="more"></span>
-
-<h2 id="2-1-三个组件"><a href="#2-1-三个组件" class="headerlink" title="2.1 三个组件"></a>2.1 三个组件</h2><p>Seata 内部定义了 3个模块来处理全局事务和分支事务的关系和处理过程，这三个组件分别是：</p>
-<p><strong>TC (Transaction Coordinator) - 事务协调者</strong>：维护全局和分支事务的状态，驱动全局事务提交或回滚。</p>
-<p><strong>TM (Transaction Manager) - 事务管理器</strong>：定义全局事务的范围：开始全局事务、提交或回滚全局事务。</p>
-<p><strong>RM (Resource Manager) - 资源管理器</strong>：管理分支事务处理的资源，与TC交谈以注册分支事务和报告分支事务的状态，并驱动分支事务提交或回滚。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/1460000038240947.png"></p>
-<h2 id="2-2-执行步骤"><a href="#2-2-执行步骤" class="headerlink" title="2.2 执行步骤"></a>2.2 执行步骤</h2><p>整个全局事务的执行步骤如下：</p>
-<ol>
-<li>TM 向 TC 申请开启一个全局事务，TC 创建全局事务后返回全局唯一的 XID，XID 会在全局事务的上下文中传播；</li>
-<li>RM 向 TC 注册分支事务，该分支事务归属于拥有相同 XID 的全局事务；</li>
-<li>TM 向 TC 发起全局提交或回滚；</li>
-<li>TC 调度 XID 下的分支事务完成提交或者回滚。</li>
-</ol>
-<h1 id="3-Seata源码体系"><a href="#3-Seata源码体系" class="headerlink" title="3.Seata源码体系"></a>3.Seata源码体系</h1><p><strong>整体结构</strong></p>
-<blockquote>
-<p>源码基本同官方1.5.2-1.6.1版本。</p>
+    <title>Seata AT模式源码解析</title>
+    <url>/2022/11/27/Seata-AT%E6%A8%A1%E5%BC%8F%E6%BA%90%E7%A0%81%E8%A7%A3%E6%9E%90/</url>
+    <content><![CDATA[<h1 id="1-AT模式的特性"><a href="#1-AT模式的特性" class="headerlink" title="1.AT模式的特性"></a>1.AT模式的特性</h1><h2 id="1-1-前提"><a href="#1-1-前提" class="headerlink" title="1.1 前提"></a>1.1 前提</h2><p>AT模式生效需要两个前提：</p>
+<ul>
+<li>基于支持本地ACID事务的关系型数据库</li>
+<li>Java应用，通过JDBC访问数据库</li>
+</ul>
+<h2 id="1-2-整体机制"><a href="#1-2-整体机制" class="headerlink" title="1.2 整体机制"></a>1.2 整体机制</h2><p>两阶段提交协议的演变：</p>
+<ul>
+<li>一阶段：业务数据和回滚日志记录在同一个本地事务中提交，释放本地锁和连接资源。</li>
+<li>二阶段：<ul>
+<li>提交异步化，非常快速地完成。</li>
+<li>回滚通过一阶段的回滚日志进行反向补偿。</li>
+</ul>
+</li>
+</ul>
+<h2 id="1-3-写隔离"><a href="#1-3-写隔离" class="headerlink" title="1.3 写隔离"></a>1.3 写隔离</h2><ul>
+<li>一阶段本地事务提交前，需要确保先拿到 <strong>全局锁</strong> 。</li>
+<li>拿不到 <strong>全局锁</strong> ，不能提交本地事务。</li>
+<li>拿 <strong>全局锁</strong> 的尝试被限制在一定范围内，超出范围将放弃，并回滚本地事务，释放本地锁。</li>
+</ul>
+<h2 id="1-4-读隔离"><a href="#1-4-读隔离" class="headerlink" title="1.4 读隔离"></a>1.4 读隔离</h2><p>在数据库本地事务隔离级别 <strong>读已提交（Read Committed）</strong> 或以上的基础上，Seata（AT 模式）的默认全局隔离级别是 <strong>读未提交（Read Uncommitted）</strong> 。</p>
+<p>如果应用在特定场景下，必需要求全局的 <strong>读已提交</strong> ，目前 Seata 的方式是通过 SELECT FOR UPDATE 语句的代理。</p>
+<h1 id="2-源码梳理"><a href="#2-源码梳理" class="headerlink" title="2. 源码梳理"></a>2. 源码梳理</h1><blockquote>
+<p>源码版本 1.5.2</p>
 </blockquote>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230129155651276.png"></p>
-<h1 id="4-Seata事务模式介绍"><a href="#4-Seata事务模式介绍" class="headerlink" title="4.Seata事务模式介绍"></a>4.Seata事务模式介绍</h1><h2 id="4-1-Seata-AT-模式"><a href="#4-1-Seata-AT-模式" class="headerlink" title="4.1 Seata AT 模式"></a>4.1 Seata AT 模式</h2><p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230129171805523.png"></p>
-<p>两阶段提交协议的演变：</p>
-<p><strong>一阶段</strong>：业务数据和回滚日志记录在同一个本地事务中提交，释放本地锁和连接资源。</p>
-<p><strong>二阶段</strong>：</p>
-<p>提交异步化，非常快速地完成。</p>
-<p>回滚通过一阶段的回滚日志进行反向补偿。</p>
-<h2 id="4-2-Seata-TCC-模式"><a href="#4-2-Seata-TCC-模式" class="headerlink" title="4.2 Seata TCC 模式"></a>4.2 Seata TCC 模式</h2><p>整体是两阶段提交的模型。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/seata_tcc-1.png"></p>
-<p>全局事务是由若干分支事务组成的，分支事务要满足两阶段提交的模型要求，即需要每个分支事务都具备自己的：</p>
-<p><strong>一阶段</strong> prepare 行为</p>
-<p><strong>二阶段</strong> commit 或 rollback 行为</p>
-<h2 id="4-3-Seata-Saga-模式"><a href="#4-3-Seata-Saga-模式" class="headerlink" title="4.3 Seata Saga 模式"></a>4.3 Seata Saga 模式</h2><p>目前Seata提供的Saga模式是基于状态机引擎来实现的，机制是：</p>
-<ul>
-<li>通过状态图来定义服务调用的流程并生成 json 状态语言定义文件。</li>
-<li>状态图中一个节点可以是调用一个服务，节点可以配置它的补偿节点。</li>
-<li>状态图 json 由状态机引擎驱动执行，当出现异常时状态引擎反向执行已成功节点对应的补偿节点将事务回滚。</li>
-<li>可以实现服务编排需求，支持单项选择、并发、子流程、参数转换、参数映射、服务执行状态判断、异常捕获等功能。</li>
-</ul>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/1460000038240949.png"></p>
-<h2 id="4-4-Seata-XA-模式"><a href="#4-4-Seata-XA-模式" class="headerlink" title="4.4 Seata XA 模式"></a>4.4 Seata XA 模式</h2><p>利用事务资源（数据库、消息服务等）对 XA 协议的支持，以 XA 协议的机制来管理分支事务的一种 事务模式。</p>
-<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/TB1hSpccIVl614jSZKPXXaGjpXa-1330-924.png"></p>
-<p><strong>执行阶段</strong>：</p>
-<ul>
-<li>可回滚：业务 SQL 操作放在 XA 分支中进行，由资源对 XA 协议的支持来保证 可回滚。</li>
-<li>持久化：XA 分支完成后，执行 XA prepare，同样，由资源对 XA 协议的支持来保证持久化（即，之后任何意外都不会造成无法回滚的情况）。</li>
-</ul>
-<p><strong>完成阶段</strong>：</p>
-<ul>
-<li>分支提交：执行 XA 分支的 commit</li>
-<li>分支回滚：执行 XA 分支的 rollback</li>
-</ul>
+<h2 id="2-1-TM及RM初始化"><a href="#2-1-TM及RM初始化" class="headerlink" title="2.1 TM及RM初始化"></a>2.1 TM及RM初始化</h2><p>TM和RM（Client端）由业务系统集成，AT模式下，在处理TC（Server端）发过来的请求时，这俩角色发挥着主要作用。所以从GlobalTransactionScanner中两者的初始化开始说起。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127212033165.png" alt="image-20221127212033165"></p>
+<p>启动的时候，会调用GlobalTransactionScanner#initClient()方法，在initClient()中初始化TM和RM。</p>
+<p>TM和RM初始化，主要是注册各种处理器，最终构造一个处理器映射表：</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213129581.png" alt="image-20221127213129581"></p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213354445.png" alt="image-20221127213354445"></p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213428347.png" alt="image-20221127213428347"></p>
+<p>RM注册处理器逻辑相同，这里不多展示。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127213557337.png" alt="image-20221127213557337"></p>
+<p>需要关注的是RM初始化时，在注册各种处理器之前还有两个操作：</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127214227198.png" alt="image-20221127214227198"></p>
+<p>RM初始化时，先是设置了 ResourceManager 和 TransactionMessageHandler，之后也是如TM初始化一样注册各种处理器，有区别的是注册处理器流程中，RM是注册完三个特有的客户端之后，才执行与TM类似的注册流程。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221127222604783.png" alt="image-20221127222604783"></p>
+<p>真正处理请求的还是靠调用各个处理器中的handler.onRequest()方法，于是问题的关键就很明显了，就在于handler。</p>
+<h2 id="2-2-ResourceManager"><a href="#2-2-ResourceManager" class="headerlink" title="2.2 ResourceManager"></a>2.2 ResourceManager</h2><p>在了解ResourceManager之前，需要先了解下ResourceManagerInbound和ResourceManagerOutbound。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129230253020.png" alt="image-20221129230253020"></p>
+<p>ResourceManagerInbound是处理接收到TC的请求的，是TC向RM发请求</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129230822733.png" alt="image-20221129230822733"></p>
+<p>ResourceManagerOutbound是处理流出的消息的，是RM向TC发请求</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129232244968.png" alt="image-20221129232244968"></p>
+<p>ResourceManager继承了二者，所以既负责向TC发请求，又负责接收从TC来的请求。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20221129234706090.png" alt="image-20221129234706090"></p>
+<p>DefaultResourceManager.get()得到的是一个单例DefaultResourceManager，创建DefaultResourceManager的时候会构建一个分支类型为ResourceManager的一个Map。</p>
 ]]></content>
       <categories>
         <category>技术</category>
@@ -367,6 +304,69 @@
 <p>account服务拆分基本相同，这里省略。</p>
 <h2 id="3-3-入口业务方法独立"><a href="#3-3-入口业务方法独立" class="headerlink" title="3.3 入口业务方法独立"></a>3.3 入口业务方法独立</h2><p>上节是将各个微服务的业务实现代码按照 <strong>二阶段提交</strong> 的思想进行了拆分，回到业务入口方法这里，不可能也不应该在fundpay服务拆分后的二阶段方法中执行远程调用，所以独立出单独的入口方法<code>Action</code>，执行整体的业务逻辑（含服务间远程调用），将各分支事务纳入全局事务的控制中。</p>
 <p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230130174454286.png"></p>
+]]></content>
+      <categories>
+        <category>技术</category>
+      </categories>
+      <tags>
+        <tag>seata</tag>
+        <tag>分布式事务</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Seata源码结构及事务模式介绍</title>
+    <url>/2023/01/30/Seata%E6%BA%90%E7%A0%81%E7%BB%93%E6%9E%84%E5%8F%8A%E4%BA%8B%E5%8A%A1%E6%A8%A1%E5%BC%8F%E4%BB%8B%E7%BB%8D/</url>
+    <content><![CDATA[<h1 id="1-Seata是什么"><a href="#1-Seata是什么" class="headerlink" title="1.Seata是什么"></a>1.Seata是什么</h1><p>Seata 是一款开源的分布式事务解决方案，致力于提供高性能和简单易用的分布式事务服务。Seata 将为用户提供了 AT、TCC、SAGA 和 XA 事务模式，为用户打造一站式的分布式解决方案。</p>
+<h1 id="2-Seata体系中的三个组件"><a href="#2-Seata体系中的三个组件" class="headerlink" title="2.Seata体系中的三个组件"></a>2.Seata体系中的三个组件</h1><span id="more"></span>
+
+<h2 id="2-1-三个组件"><a href="#2-1-三个组件" class="headerlink" title="2.1 三个组件"></a>2.1 三个组件</h2><p>Seata 内部定义了 3个模块来处理全局事务和分支事务的关系和处理过程，这三个组件分别是：</p>
+<p><strong>TC (Transaction Coordinator) - 事务协调者</strong>：维护全局和分支事务的状态，驱动全局事务提交或回滚。</p>
+<p><strong>TM (Transaction Manager) - 事务管理器</strong>：定义全局事务的范围：开始全局事务、提交或回滚全局事务。</p>
+<p><strong>RM (Resource Manager) - 资源管理器</strong>：管理分支事务处理的资源，与TC交谈以注册分支事务和报告分支事务的状态，并驱动分支事务提交或回滚。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/1460000038240947.png"></p>
+<h2 id="2-2-执行步骤"><a href="#2-2-执行步骤" class="headerlink" title="2.2 执行步骤"></a>2.2 执行步骤</h2><p>整个全局事务的执行步骤如下：</p>
+<ol>
+<li>TM 向 TC 申请开启一个全局事务，TC 创建全局事务后返回全局唯一的 XID，XID 会在全局事务的上下文中传播；</li>
+<li>RM 向 TC 注册分支事务，该分支事务归属于拥有相同 XID 的全局事务；</li>
+<li>TM 向 TC 发起全局提交或回滚；</li>
+<li>TC 调度 XID 下的分支事务完成提交或者回滚。</li>
+</ol>
+<h1 id="3-Seata源码体系"><a href="#3-Seata源码体系" class="headerlink" title="3.Seata源码体系"></a>3.Seata源码体系</h1><p><strong>整体结构</strong></p>
+<blockquote>
+<p>源码基本同官方1.5.2-1.6.1版本。</p>
+</blockquote>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230129155651276.png"></p>
+<h1 id="4-Seata事务模式介绍"><a href="#4-Seata事务模式介绍" class="headerlink" title="4.Seata事务模式介绍"></a>4.Seata事务模式介绍</h1><h2 id="4-1-Seata-AT-模式"><a href="#4-1-Seata-AT-模式" class="headerlink" title="4.1 Seata AT 模式"></a>4.1 Seata AT 模式</h2><p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230129171805523.png"></p>
+<p>两阶段提交协议的演变：</p>
+<p><strong>一阶段</strong>：业务数据和回滚日志记录在同一个本地事务中提交，释放本地锁和连接资源。</p>
+<p><strong>二阶段</strong>：</p>
+<p>提交异步化，非常快速地完成。</p>
+<p>回滚通过一阶段的回滚日志进行反向补偿。</p>
+<h2 id="4-2-Seata-TCC-模式"><a href="#4-2-Seata-TCC-模式" class="headerlink" title="4.2 Seata TCC 模式"></a>4.2 Seata TCC 模式</h2><p>整体是两阶段提交的模型。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/seata_tcc-1.png"></p>
+<p>全局事务是由若干分支事务组成的，分支事务要满足两阶段提交的模型要求，即需要每个分支事务都具备自己的：</p>
+<p><strong>一阶段</strong> prepare 行为</p>
+<p><strong>二阶段</strong> commit 或 rollback 行为</p>
+<h2 id="4-3-Seata-Saga-模式"><a href="#4-3-Seata-Saga-模式" class="headerlink" title="4.3 Seata Saga 模式"></a>4.3 Seata Saga 模式</h2><p>目前Seata提供的Saga模式是基于状态机引擎来实现的，机制是：</p>
+<ul>
+<li>通过状态图来定义服务调用的流程并生成 json 状态语言定义文件。</li>
+<li>状态图中一个节点可以是调用一个服务，节点可以配置它的补偿节点。</li>
+<li>状态图 json 由状态机引擎驱动执行，当出现异常时状态引擎反向执行已成功节点对应的补偿节点将事务回滚。</li>
+<li>可以实现服务编排需求，支持单项选择、并发、子流程、参数转换、参数映射、服务执行状态判断、异常捕获等功能。</li>
+</ul>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/1460000038240949.png"></p>
+<h2 id="4-4-Seata-XA-模式"><a href="#4-4-Seata-XA-模式" class="headerlink" title="4.4 Seata XA 模式"></a>4.4 Seata XA 模式</h2><p>利用事务资源（数据库、消息服务等）对 XA 协议的支持，以 XA 协议的机制来管理分支事务的一种 事务模式。</p>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/TB1hSpccIVl614jSZKPXXaGjpXa-1330-924.png"></p>
+<p><strong>执行阶段</strong>：</p>
+<ul>
+<li>可回滚：业务 SQL 操作放在 XA 分支中进行，由资源对 XA 协议的支持来保证 可回滚。</li>
+<li>持久化：XA 分支完成后，执行 XA prepare，同样，由资源对 XA 协议的支持来保证持久化（即，之后任何意外都不会造成无法回滚的情况）。</li>
+</ul>
+<p><strong>完成阶段</strong>：</p>
+<ul>
+<li>分支提交：执行 XA 分支的 commit</li>
+<li>分支回滚：执行 XA 分支的 rollback</li>
+</ul>
 ]]></content>
       <categories>
         <category>技术</category>
@@ -794,8 +794,8 @@
 
 <h2 id="142-环形链表二"><a href="#142-环形链表二" class="headerlink" title="142 环形链表二"></a>142 环形链表二</h2><p>题目：<a href="https://leetcode.cn/problems/linked-list-cycle-ii/">142. 环形链表 II🟠</a></p>
 <p>思路：基于 <a href="https://leetcode.cn/problems/linked-list-cycle">141. 环形链表</a> 的解法，直观地来说就是当快慢指针相遇时，让其中任一个指针指向头节点，然后让它俩以相同速度前进，再次相遇时所在的节点位置就是环开始的位置。</p>
-<p><img src="/images/image-20230302231644713.png" alt="image-20230302231644713"></p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">public ListNode detectCycle(ListNode head) &#123;</span><br><span class="line">        ListNode fast,slow;</span><br><span class="line">        fast = head;</span><br><span class="line">        slow = head;</span><br><span class="line">        while(fast !=null&amp;&amp;fast.next!=null)&#123;</span><br><span class="line">            slow = slow.next;</span><br><span class="line">            fast = fast.next.next;</span><br><span class="line">            //快慢指针相交，中断前进</span><br><span class="line">            if(slow == fast)&#123;</span><br><span class="line">                break;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        //快指针next节点为空的话，说明链表无环</span><br><span class="line">        if(fast==null||fast.next==null)&#123;</span><br><span class="line">            return null;</span><br><span class="line">        &#125;</span><br><span class="line">        //此时慢指针重新指向头节点</span><br><span class="line">        slow = head;</span><br><span class="line">        //快慢指针同步前进，等待相交点即为环的入口</span><br><span class="line">        while(slow!=fast)&#123;</span><br><span class="line">            slow = slow.next;</span><br><span class="line">            fast = fast.next;</span><br><span class="line">        &#125;</span><br><span class="line">        return slow;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+<p><img src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/image-20230302231644713.png" alt="image-20230302231644713"></p>
+<figure class="highlight java"><table><tr><td class="code"><pre><span class="line"><span class="keyword">public</span> ListNode <span class="title function_">detectCycle</span><span class="params">(ListNode head)</span> &#123;</span><br><span class="line">        ListNode fast,slow;</span><br><span class="line">        fast = head;</span><br><span class="line">        slow = head;</span><br><span class="line">        <span class="keyword">while</span>(fast !=<span class="literal">null</span>&amp;&amp;fast.next!=<span class="literal">null</span>)&#123;</span><br><span class="line">            slow = slow.next;</span><br><span class="line">            fast = fast.next.next;</span><br><span class="line">            <span class="comment">//快慢指针相交，中断前进</span></span><br><span class="line">            <span class="keyword">if</span>(slow == fast)&#123;</span><br><span class="line">                <span class="keyword">break</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="comment">//快指针next节点为空的话，说明链表无环</span></span><br><span class="line">        <span class="keyword">if</span>(fast==<span class="literal">null</span>||fast.next==<span class="literal">null</span>)&#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="literal">null</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="comment">//此时慢指针重新指向头节点</span></span><br><span class="line">        slow = head;</span><br><span class="line">        <span class="comment">//快慢指针同步前进，等待相交点即为环的入口</span></span><br><span class="line">        <span class="keyword">while</span>(slow!=fast)&#123;</span><br><span class="line">            slow = slow.next;</span><br><span class="line">            fast = fast.next;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> slow;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
 
 <h2 id="160-相交链表"><a href="#160-相交链表" class="headerlink" title="160 相交链表"></a>160 相交链表</h2><p>题目：<a href="https://leetcode.cn/problems/intersection-of-two-linked-lists">160. 相交链表 🟢</a></p>
 <p>思路：难点在于链表长度不同，因此到达相交节点的步数也不同，因此通过拼接，让 <code>p1</code> 遍历完链表 <code>A</code> 之后开始遍历链表 <code>B</code>，让 <code>p2</code> 遍历完链表 <code>B</code> 之后开始遍历链表 <code>A</code>，这样相当于「逻辑上」两条链表接在了一起，以让 <code>p1</code> 和 <code>p2</code> 同时进入相交节点。</p>
