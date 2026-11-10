@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言DDD 分层、整洁架构与六边形架构常被当成三选一，其实回答的是同一个问题的不同侧面。本篇用一条下单用例对照三者的依赖方向与领域层位置，给出选型判断，也说明什么时候引入端口适配器并不划算。 一次把订单库迁往分库分表中间件的改造，评估会上给出的工作量是「三周，改 47 个类」。翻代码才发现，难点不在 SQL 方言，而在领域对象本身长成了这样： 123456789101112131415161718">
+<meta property="og:type" content="article">
+<meta property="og:title" content="分层架构比较：DDD、整洁架构与六边形架构">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/03/26/%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E6%AF%94%E8%BE%83%EF%BC%9ADDD%E3%80%81%E6%95%B4%E6%B4%81%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%85%AD%E8%BE%B9%E5%BD%A2%E6%9E%B6%E6%9E%84/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言DDD 分层、整洁架构与六边形架构常被当成三选一，其实回答的是同一个问题的不同侧面。本篇用一条下单用例对照三者的依赖方向与领域层位置，给出选型判断，也说明什么时候引入端口适配器并不划算。 一次把订单库迁往分库分表中间件的改造，评估会上给出的工作量是「三周，改 47 个类」。翻代码才发现，难点不在 SQL 方言，而在领域对象本身长成了这样： 123456789101112131415161718">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-03-26T10:27:40.000Z">
+<meta property="article:modified_time" content="2023-03-26T10:27:40.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="DDD">
+<meta property="article:tag" content="分层架构">
+<meta property="article:tag" content="架构演进">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/03/26/%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E6%AF%94%E8%BE%83%EF%BC%9ADDD%E3%80%81%E6%95%B4%E6%B4%81%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%85%AD%E8%BE%B9%E5%BD%A2%E6%9E%B6%E6%9E%84/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>分层架构比较：DDD、整洁架构与六边形架构 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/03/26/%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E6%AF%94%E8%BE%83%EF%BC%9ADDD%E3%80%81%E6%95%B4%E6%B4%81%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%85%AD%E8%BE%B9%E5%BD%A2%E6%9E%B6%E6%9E%84/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          分层架构比较：DDD、整洁架构与六边形架构
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-03-26 18:27:40" itemprop="dateCreated datePublished" datetime="2023-03-26T18:27:40+08:00">2023-03-26</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>DDD 分层、整洁架构与六边形架构常被当成三选一，其实回答的是同一个问题的不同侧面。本篇用一条下单用例对照三者的依赖方向与领域层位置，给出选型判断，也说明什么时候引入端口适配器并不划算。</p>
+<p>一次把订单库迁往分库分表中间件的改造，评估会上给出的工作量是「三周，改 47 个类」。翻代码才发现，难点不在 SQL 方言，而在领域对象本身长成了这样：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：领域对象被持久化框架与 Web 框架双向绑死</span></span><br><span class="line"><span class="meta">@Entity</span></span><br><span class="line"><span class="meta">@Table(name = &quot;t_order&quot;)</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="meta">@Id</span></span><br><span class="line">    <span class="keyword">private</span> Long id;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Autowired</span></span><br><span class="line">    <span class="keyword">private</span> StockFeignClient stockClient;   <span class="comment">// 领域对象里注入远程调用</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">place</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="comment">// 业务规则、远程调用、参数校验揉在一个方法</span></span><br><span class="line">        <span class="keyword">if</span> (!stockClient.check(<span class="built_in">this</span>.skuId, <span class="built_in">this</span>.quantity)) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">RuntimeException</span>(<span class="string">&quot;库存不足&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="built_in">this</span>.status = <span class="string">&quot;PAID&quot;</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>换库要动 <code>@Table</code>、DAO 与所有 SQL；换服务发现组件要动 <code>StockFeignClient</code>；而「库存不足不允许下单」这条最该稳定的规则，和前两者挤在同一个类里。任何一次基础设施变更，都要回归全部业务规则。这不是迁移成本，是依赖方向反了：本该保护核心逻辑的层，反过来依赖了最容易变化的东西。</p>
+<p>三种分层架构模型的分歧，几乎都从这一处开始——谁依赖谁，领域层放在哪，外部资源怎么接进来。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>三者提出于不同年代，但共享同一个内核：<strong>以领域模型为中心，依赖方向一律由外向内，核心业务逻辑与外部应用、基础资源隔离</strong>。差别只在表达形式与隔离手段。</p>
+<ul>
+<li><strong>DDD 分层架构</strong>（依赖倒置后的四层）：用户接口层 → 应用层 → 领域层 → 基础层。基础层不再被其它层依赖，而是实现领域层定义的接口；采用严格分层时，每层只与紧邻下层耦合。</li>
+<li><strong>整洁架构</strong>（洋葱架构）：同心圆由内向外为领域模型、领域服务、应用服务、最外层适配器（UI 与基础设施）。依赖原则只有一条：外层依赖内层，内层对外部一无所知。</li>
+<li><strong>六边形架构</strong>（端口与适配器）：内六边形是应用与领域模型，外六边形是外部驱动与资源；内外之间只通过<strong>端口</strong>（接口）与<strong>适配器</strong>（实现）交互，一个端口可接多个适配器，由适配器完成协议转换。</li>
+</ul>
+<p>把三者叠起来看，圈住的都是同一块：领域模型加应用服务构成的核心，外围是易变的 UI、数据库与消息中间件。DDD 用「层」描述它，整洁架构用「同心圆」，六边形用「端口」。</p>
+<pre class="mermaid">
+flowchart TB
+    subgraph DDD[&quot;DDD 分层架构&quot;]
+        U1[&quot;用户接口层&quot;] --&gt; A1[&quot;应用层&quot;]
+        A1 --&gt; D1[&quot;领域层（核心）&quot;]
+        I1[&quot;基础层&quot;] -.-&gt;|实现接口| D1
+    end
+    subgraph CLEAN[&quot;整洁架构&quot;]
+        U2[&quot;外层：UI 与基础设施&quot;] --&gt; A2[&quot;应用服务&quot;]
+        A2 --&gt; DS2[&quot;领域服务&quot;]
+        DS2 --&gt; D2[&quot;领域模型&quot;]
+    end
+    subgraph HEX[&quot;六边形架构&quot;]
+        AD[&quot;外部适配器&quot;] --&gt; PORT[&quot;端口&quot;]
+        PORT --&gt; CORE[&quot;内六边形：应用与领域&quot;]
+    end
+</pre>
+
+<p>三张子图的箭头一律指向核心，这正是它们共同的骨架；DDD 图里基础层那条虚线，是依赖倒置留下的痕迹——它不去依赖领域层，而是去实现领域层定义的接口。无论采用哪种画法，领域层都封闭在各自的限界上下文内部，不跨上下文共享模型。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>拿同一条用例「用户提交订单 → 校验可售库存」看三种架构把它放在哪。</p>
+<ul>
+<li>DDD 分层：<code>OrderController</code>（用户接口）→ <code>PlaceOrderAppService</code>（应用，编排事务、发布领域事件 <code>OrderCreated</code>）→ <code>Order</code> 聚合根与 <code>StockPolicy</code> 领域服务（领域，持有「可售数量 ≥ 数量」规则）→ <code>OrderRepositoryImpl</code>、<code>StockHttpClient</code>（基础，实现接口）。规则在领域层，事务在应用层。</li>
+<li>整洁架构：同一条规则落在同心圆最内的实体里，用例编排在应用服务，Web 与数据库在最外层。与 DDD 的差别主要是术语与层次画法，落地代码几乎同构。</li>
+<li>六边形架构：<code>PlaceOrderUseCase</code> 在内侧，<code>StockPort</code> 是端口，<code>StockHttpClient</code> 与 <code>StockDbAdapter</code> 是外侧适配器。规则同样在内侧，但内外之间只允许通过端口通信，没有「层与层」的概念，只有「端口与适配器」。</li>
+</ul>
+<p>把差异收敛成一张对照表：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>DDD 分层架构</th>
+<th>整洁架构</th>
+<th>六边形架构</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>结构隐喻</td>
+<td>四层堆叠</td>
+<td>同心圆</td>
+<td>内外六边形 + 端口</td>
+</tr>
+<tr>
+<td>依赖方向</td>
+<td>上层依赖下层，基础层经依赖倒置反转</td>
+<td>外层依赖内层</td>
+<td>适配器依赖端口，指向内六边形</td>
+</tr>
+<tr>
+<td>领域层位置</td>
+<td>第三层，核心</td>
+<td>最内圆</td>
+<td>内六边形</td>
+</tr>
+<tr>
+<td>外部资源接入</td>
+<td>基础层实现资源库接口</td>
+<td>最外层被动适配器</td>
+<td>端口 + 适配器</td>
+</tr>
+<tr>
+<td>隔离手段</td>
+<td>分层 + 依赖倒置</td>
+<td>依赖原则</td>
+<td>端口 &#x2F; 适配器、协议转换</td>
+</tr>
+<tr>
+<td>术语重心</td>
+<td>层、聚合、资源库</td>
+<td>用例、实体、依赖原则</td>
+<td>端口、适配器、驱动</td>
+</tr>
+</tbody></table>
+<p>选型可以按诉求直接对号入座：</p>
+<table>
+<thead>
+<tr>
+<th>场景 &#x2F; 诉求</th>
+<th>建议模型</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>团队刚从三层架构迁移，需要清晰的目录与职责</td>
+<td>DDD 分层架构</td>
+<td>四层与既有工程习惯最接近，落地阻力最小</td>
+</tr>
+<tr>
+<td>强调用例边界、要求业务规则完全不依赖框架</td>
+<td>整洁架构</td>
+<td>依赖原则最直白，便于用架构测试约束</td>
+</tr>
+<tr>
+<td>多前端 &#x2F; 多渠道接入、外部系统多且协议杂</td>
+<td>六边形架构</td>
+<td>一个端口多适配器，协议转换集中</td>
+</tr>
+<tr>
+<td>需要频繁替换存储、消息中间件或第三方渠道</td>
+<td>六边形架构</td>
+<td>适配器可插拔，核心零改动</td>
+</tr>
+<tr>
+<td>以 CRUD 为主、外部依赖单一</td>
+<td>传统分层即可</td>
+<td>三者收益都有限</td>
+</tr>
+</tbody></table>
+<p>三者不是递进关系，也不互相替代。<strong>DDD 分层回答「代码放哪一层」，整洁架构回答「依赖该朝哪个方向」，六边形回答「外部系统怎么接进来」</strong>。生产里常见的是叠用：用 DDD 的四层组织目录，用依赖倒置落实依赖方向，用端口适配器管理多变的外部渠道。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>依赖倒置落到工程上，就是「接口在领域层、实现在基础设施层、应用服务只认接口」。目录形态如下：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line">order-context/</span><br><span class="line">├── interfaces/                       # 用户接口层（主动适配）</span><br><span class="line">│   └── OrderController.java</span><br><span class="line">├── application/                      # 应用层：用例编排</span><br><span class="line">│   └── PlaceOrderAppService.java     # 只依赖 StockPort / OrderRepository</span><br><span class="line">├── domain/                           # 领域层：不 import 任何框架</span><br><span class="line">│   ├── model/aggregate/Order.java</span><br><span class="line">│   ├── service/StockPolicy.java</span><br><span class="line">│   └── port/</span><br><span class="line">│       ├── OrderRepository.java      # 端口：出站持久化接口</span><br><span class="line">│       └── StockPort.java            # 端口：出站库存校验接口</span><br><span class="line">└── infrastructure/                   # 基础层：全部适配器</span><br><span class="line">    ├── persistence/OrderRepositoryImpl.java   # javax.persistence / JDBC</span><br><span class="line">    └── client/StockHttpClient.java            # 服务发现 / HTTP</span><br></pre></td></tr></table></figure>
+
+<p>端口定义在领域层，不含任何框架痕迹：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 端口：领域层定义，不 import Spring、ORM 或任何 HTTP 客户端</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">StockPort</span> &#123;</span><br><span class="line">    <span class="type">boolean</span> <span class="title function_">available</span><span class="params">(String skuId, <span class="type">int</span> quantity)</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>框架注解只出现在适配器里：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 适配器：基础设施层实现端口，协议转换集中在此</span></span><br><span class="line"><span class="meta">@Repository</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">StockHttpClient</span> <span class="keyword">implements</span> <span class="title class_">StockPort</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> RestTemplate restTemplate;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">StockHttpClient</span><span class="params">(RestTemplate restTemplate)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.restTemplate = restTemplate;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">boolean</span> <span class="title function_">available</span><span class="params">(String skuId, <span class="type">int</span> quantity)</span> &#123;</span><br><span class="line">        <span class="type">StockResponse</span> <span class="variable">resp</span> <span class="operator">=</span> restTemplate.getForObject(</span><br><span class="line">                <span class="string">&quot;http://inventory-service/stock/&quot;</span> + skuId, StockResponse.class);</span><br><span class="line">        <span class="keyword">return</span> resp != <span class="literal">null</span> &amp;&amp; resp.getAvailable() &gt;= quantity;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>应用服务只依赖端口，业务规则与框架彻底分开：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 应用服务：只依赖端口，不感知 HTTP、数据库与服务发现</span></span><br><span class="line"><span class="meta">@Service</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">PlaceOrderAppService</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> StockPort stockPort;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> OrderRepository orderRepository;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">PlaceOrderAppService</span><span class="params">(StockPort stockPort,</span></span><br><span class="line"><span class="params">                                OrderRepository orderRepository)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.stockPort = stockPort;</span><br><span class="line">        <span class="built_in">this</span>.orderRepository = orderRepository;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Transactional</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">place</span><span class="params">(PlaceOrderCmd cmd)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (!stockPort.available(cmd.getSkuId(), cmd.getQuantity())) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalStateException</span>(<span class="string">&quot;库存不足&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">Order</span> <span class="variable">order</span> <span class="operator">=</span> Order.create(cmd.getOrderId(), cmd.getSkuId(),</span><br><span class="line">                                   cmd.getQuantity());</span><br><span class="line">        orderRepository.save(order);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>三个类分属领域层、基础设施层、应用层，编译期依赖是「应用 → 端口 ← 适配器」，运行期由容器注入具体实现。领域层与编排层没有一行框架代码，这正是开头那次迁移本该有的样子：换库存渠道只改 <code>StockHttpClient</code>，换库只改 <code>OrderRepositoryImpl</code>，<code>PlaceOrderAppService</code> 与 <code>Order</code> 不动。构造器注入也顺带消掉了反例里字段注入带来的隐式依赖。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>领域层 import 框架或基础设施。</strong> 实体带 <code>@Entity</code>、注入远程客户端，业务规则与框架同生共死，换依赖要回归全部业务。</li>
+<li><strong>把业务规则写进应用层或 Controller。</strong> 应用层膨胀成事务脚本，领域模型贫血失焦，规则重复实现且无处归属。</li>
+<li><strong>依赖倒置只做一半：接口和实现都放在基础设施层。</strong> 领域层依旧依赖具体包，接口只是一层空转，换库照样改领域代码。</li>
+<li><strong>没有多适配器诉求却机械照搬端口。</strong> 一个端口只接一个适配器还到处建端口，目录复杂度翻倍，收益为零。</li>
+<li><strong>松散分层放任跨层调用。</strong> 用户接口层直接调领域服务甚至资源库，核心逻辑外泄，服务变更时调用方找不全。</li>
+</ol>
+<p>六边形架构的价值与「外部系统的数量和变化频率」成正比，以下情形不值得引入：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>外部依赖单一且长期不变（一个库、一个前端）</td>
+<td>四层分层足够，端口适配器是纯开销</td>
+</tr>
+<tr>
+<td>以 CRUD &#x2F; 报表 &#x2F; 数据搬运为主，业务规则少</td>
+<td>领域层本就很薄，隔离收益有限</td>
+</tr>
+<tr>
+<td>一次性交付、后续不再演进</td>
+<td>可插拔能力无处兑现</td>
+</tr>
+<tr>
+<td>团队尚不熟悉依赖倒置与接口隔离</td>
+<td>先落实四层与「接口放领域层」，别一步到位</td>
+</tr>
+<tr>
+<td>外部协议由网关统一屏蔽，业务侧只见一种调用方式</td>
+<td>适配器层没有协议转换可做</td>
+</tr>
+</tbody></table>
+<p>再补一句总判断：三者都以「领域模型相对稳定、外部需求易变」为前提。若一个系统连领域模型本身都还在探索期，任何分层的投入都会随模型重写而作废，此时直接实现、保留重构空间更经济。</p>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>架构</th>
+<th>一句话</th>
+<th>依赖方向</th>
+<th>隔离手段</th>
+<th>优先诉求</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>DDD 分层</td>
+<td>用四层组织代码与职责</td>
+<td>上层 → 下层，基础层依赖倒置</td>
+<td>分层 + 资源库接口</td>
+<td>目录清晰、易迁移</td>
+</tr>
+<tr>
+<td>整洁架构</td>
+<td>用同心圆约束依赖方向</td>
+<td>外层 → 内层</td>
+<td>依赖原则</td>
+<td>业务规则不依赖框架</td>
+</tr>
+<tr>
+<td>六边形架构</td>
+<td>用端口适配器隔离外部</td>
+<td>适配器 → 端口 → 内六边形</td>
+<td>端口 &#x2F; 适配器</td>
+<td>多渠道、多协议、可插拔</td>
+</tr>
+</tbody></table>
+<table>
+<thead>
+<tr>
+<th>检查项</th>
+<th>合格标准</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>领域层是否纯净</td>
+<td>不 import Spring &#x2F; ORM &#x2F; HTTP 客户端</td>
+</tr>
+<tr>
+<td>端口归属</td>
+<td>接口在领域层，实现在基础设施层</td>
+</tr>
+<tr>
+<td>应用服务</td>
+<td>只依赖接口，不含业务规则</td>
+</tr>
+<tr>
+<td>依赖方向</td>
+<td>编译期依赖始终指向领域层</td>
+</tr>
+<tr>
+<td>换库 &#x2F; 换渠道成本</td>
+<td>只改适配器，不动核心</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>三种架构不是三种答案，而是同一条原则的三种画法：让最稳定的领域逻辑待在中心，让最易变的外部资源待在外围，依赖永远由外向内。DDD 分层给目录，整洁架构给依赖约束，六边形给外部系统的接法，工程上完全可以叠用。真正决定迁移成本的从来不是选了哪张图，而是领域层里有没有一行不该出现的框架代码。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>欧创新《DDD 实战课》</li>
+<li>Eric Evans, <em>Domain-Driven Design: Tackling Complexity in the Heart of Software</em>, 2004</li>
+<li>Robert C. Martin, <em>Clean Architecture: A Craftsman’s Guide to Software Structure and Design</em>, 2017</li>
+<li>Vaughn Vernon, <em>Implementing Domain-Driven Design</em>, 2013</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/03/26/%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84%E6%AF%94%E8%BE%83%EF%BC%9ADDD%E3%80%81%E6%95%B4%E6%B4%81%E6%9E%B6%E6%9E%84%E4%B8%8E%E5%85%AD%E8%BE%B9%E5%BD%A2%E6%9E%B6%E6%9E%84/" title="分层架构比较：DDD、整洁架构与六边形架构">https://xssdpgy.github.io/2023/03/26/分层架构比较：DDD、整洁架构与六边形架构/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/DDD/" rel="tag"># DDD</a>
+              <a href="/tags/%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84/" rel="tag"># 分层架构</a>
+              <a href="/tags/%E6%9E%B6%E6%9E%84%E6%BC%94%E8%BF%9B/" rel="tag"># 架构演进</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/03/21/%E9%A2%86%E5%9F%9F%E4%BA%8B%E4%BB%B6%EF%BC%9A%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%A7%A3%E8%80%A6%E4%B8%8E%E6%9C%80%E7%BB%88%E4%B8%80%E8%87%B4%E6%80%A7/" rel="prev" title="领域事件：微服务解耦与最终一致性">
+      <i class="fa fa-chevron-left"></i> 领域事件：微服务解耦与最终一致性
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/04/02/%E4%BB%A3%E7%A0%81%E6%A8%A1%E5%9E%8B%EF%BC%9A%E9%A2%86%E5%9F%9F%E5%AF%B9%E8%B1%A1%E4%B8%8E%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E6%98%A0%E5%B0%84/" rel="next" title="代码模型：领域对象与目录结构映射">
+      代码模型：领域对象与目录结构映射 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">18</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">2</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">24</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      theme    : 'forest',
+      logLevel : 3,
+      flowchart: { curve     : 'linear' },
+      gantt    : { axisFormat: '%m/%d/%Y' },
+      sequence : { actorMargin: 50 }
+    });
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '6b20f6aa709cfe0a43470e30ad3439cd',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
