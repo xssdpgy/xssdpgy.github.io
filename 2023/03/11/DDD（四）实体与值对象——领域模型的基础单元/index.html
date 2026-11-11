@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言一个地址字段选型错了，发货单、售后单和历史快照会一起跟着变。本篇讲实体与值对象的分界：什么时候该用唯一标识，什么时候用不可变的值，以及值对象在关系库里怎么存。 客服对不上账：用户三天前下的订单，详情页里的收货地址变成了他昨天新改的地址。发货单、售后单、当时的快照全跟着变了。排查下来，地址被建成一张带主键的表，订单只存了一个 address_id，指向那一行可随时 update 的记录。 123">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DDD（四）实体与值对象——领域模型的基础单元">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言一个地址字段选型错了，发货单、售后单和历史快照会一起跟着变。本篇讲实体与值对象的分界：什么时候该用唯一标识，什么时候用不可变的值，以及值对象在关系库里怎么存。 客服对不上账：用户三天前下的订单，详情页里的收货地址变成了他昨天新改的地址。发货单、售后单、当时的快照全跟着变了。排查下来，地址被建成一张带主键的表，订单只存了一个 address_id，指向那一行可随时 update 的记录。 123">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-03-11T05:25:05.000Z">
+<meta property="article:modified_time" content="2023-03-11T05:25:05.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="DDD">
+<meta property="article:tag" content="领域建模">
+<meta property="article:tag" content="实体与值对象">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>DDD（四）实体与值对象——领域模型的基础单元 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          DDD（四）实体与值对象——领域模型的基础单元
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-03-11 13:25:05" itemprop="dateCreated datePublished" datetime="2023-03-11T13:25:05+08:00">2023-03-11</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.9k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>一个地址字段选型错了，发货单、售后单和历史快照会一起跟着变。本篇讲实体与值对象的分界：什么时候该用唯一标识，什么时候用不可变的值，以及值对象在关系库里怎么存。</p>
+<p>客服对不上账：用户三天前下的订单，详情页里的收货地址变成了他昨天新改的地址。发货单、售后单、当时的快照全跟着变了。排查下来，地址被建成一张带主键的表，订单只存了一个 <code>address_id</code>，指向那一行可随时 <code>update</code> 的记录。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：把只用于描述的地址建成可变实体</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> Long addressId;                 <span class="comment">// 指向共享的、可变的地址行</span></span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">Address</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> Long id;</span><br><span class="line">    <span class="keyword">private</span> String province;</span><br><span class="line">    <span class="keyword">private</span> String city;</span><br><span class="line">    <span class="keyword">private</span> String detail;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setDetail</span><span class="params">(String detail)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.detail = detail;               <span class="comment">// 一次修改，回溯到所有历史订单</span></span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>代码没有 bug，事务也正常。问题在建模：地址在这里没有独立生命周期，它只是”这一单送到哪里”的描述，却被赋予了标识和可变状态。任何一次改动都会沿着 <code>address_id</code> 回溯到全部历史，而历史本不该被改写。</p>
+<p>结论先行：判断一个概念靠标识区分、还是靠值区分，决定了它会不会被别处的修改牵连。<strong>需要追踪”是不是同一个”、且会独立变化，用实体；只描述”是什么样的”、没有独立生命周期，用值对象。</strong> 值对象一旦不可变、只做整体替换，历史就自然被固定在下单那一刻。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p><strong>实体</strong>靠唯一标识区分，标识在历经状态变更后保持一致；重的是延续性而非属性，属性可变，业务逻辑内聚在实体（充血模型）中。订单、支付单、发货单都是实体——改了金额、改了状态，它仍是同一单。</p>
+<p><strong>值对象</strong>靠属性值识别，没有标识，不可变，把若干相关属性收成一个概念整体；相等性由全部属性决定，要改就整体替换，不就地修改，因而对协作对象没有副作用。<code>Money</code>、<code>Address</code>、<code>OrderId</code>、<code>SkuId</code> 都是值对象。</p>
+<p>取舍只有一句话：<strong>有身份、要留痕、会独立变化 → 实体；无身份、只描述、可整体替换 → 值对象。</strong></p>
+<pre class="mermaid">
+classDiagram
+    class Order {
+        &lt;&lt;实体 聚合根&gt;&gt;
+        +OrderId id
+        +OrderStatus status
+        +changeAddress(Address) void
+        +totalAmount() Money
+    }
+    class OrderItem {
+        &lt;&lt;实体&gt;&gt;
+        +Long id
+        +SkuId skuId
+        +subtotal() Money
+    }
+    class Address {
+        &lt;&lt;不可变值对象&gt;&gt;
+        +String province
+        +String city
+        +String detail
+    }
+    class Money {
+        &lt;&lt;不可变值对象&gt;&gt;
+        +BigDecimal amount
+        +Currency currency
+        +plus(Money) Money
+    }
+    Order &quot;1&quot; *-- &quot;0..*&quot; OrderItem
+    Order &quot;1&quot; *-- &quot;1&quot; Address
+    OrderItem ..&gt; Money
+    Order ..&gt; Money
+</pre>
+
+<p>实体有延续性，<code>Order</code> 里 <code>changeAddress</code> 换掉的是整个 <code>Address</code>，不是修改它的某个字段；值对象没有这条时间线，它只是某一刻的一个取值。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把订单履约里的对象过一遍，归属其实很稳定：</p>
+<table>
+<thead>
+<tr>
+<th>领域对象</th>
+<th>归属</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Order</code>、<code>PaymentInstruction</code>、<code>ShipmentOrder</code></td>
+<td>实体</td>
+<td>有唯一标识，状态跨多次变更，需要被追踪</td>
+</tr>
+<tr>
+<td><code>OrderItem</code></td>
+<td>实体</td>
+<td>依附订单但需单独标识，行级优惠与退货都按行追溯</td>
+</tr>
+<tr>
+<td><code>Money</code>、<code>Address</code>、<code>OrderId</code>、<code>SkuId</code>、<code>Quantity</code></td>
+<td>值对象</td>
+<td>只描述，无独立生命周期，改即整体替换</td>
+</tr>
+</tbody></table>
+<p>三条判断比背定义管用：</p>
+<ol>
+<li><strong>是否需要独立标识。</strong> 两张一百元没有区别，两张订单有。</li>
+<li><strong>是否会独立变化且变化要留痕。</strong> 订单状态从”已创建”到”已支付”，是同一对象的一段历史；收货地址从 A 改成 B，是换了一个值，不该留下”地址被改过”的历史。</li>
+<li><strong>是否被多处引用且共享可变状态。</strong> 一旦多个对象指向同一份可变数据，就要警惕：要么把它实体化并管好生命周期，要么让它不可变、各自持有副本。开篇的事故正是踩了这一条。</li>
+</ol>
+<p>同一个概念会随场景换边。订单里的收货地址是值对象，随订单快照固化；而”用户地址簿”里的地址要被反复编辑、单独查询、跨订单复用，就该建成实体。<strong>是实体还是值对象，取决于它在当前上下文里承担的职责，不取决于它叫什么名字。</strong></p>
+<p>值对象落到关系库，有三种存法，取舍要看查询需求而不是建模偏好：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>表结构</th>
+<th>适用</th>
+<th>查询能力</th>
+<th>代价</th>
+<th>案例落点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>嵌入式列</td>
+<td>实体表内若干列</td>
+<td>属性少且固定、需按属性检索</td>
+<td>可索引、可条件过滤</td>
+<td>概念在库表上被摊平，列随属性膨胀</td>
+<td><code>amount</code> + <code>currency</code> 两列</td>
+</tr>
+<tr>
+<td>JSON 列</td>
+<td>实体表内一列存 JSON</td>
+<td>属性多、结构会变、不按内部属性查</td>
+<td>只能整体读写</td>
+<td>无法对内部属性加索引，方言有差异</td>
+<td><code>address_json</code></td>
+</tr>
+<tr>
+<td>独立表</td>
+<td>值对象单独建表 + 外键</td>
+<td>一对多、需独立检索或跨实体复用</td>
+<td>完整</td>
+<td>join 增多，易滑向”实体化”</td>
+<td>多收货地址的地址簿</td>
+</tr>
+</tbody></table>
+<p>默认选嵌入式列；属性多且不检索用 JSON；只有当值对象出现一对多、或要被独立查询时才升格为独立表。但要留个心眼：<strong>一旦为它建了主键、允许单独修改，就该重新审视它是不是其实已经是实体</strong>——存储层的这步滑移，往往正是模型边界开始模糊的信号。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>目录把两类对象分开，持久化转换集中在基础设施层：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">trading-context/</span><br><span class="line">├── domain/</span><br><span class="line">│   ├── model/</span><br><span class="line">│   │   ├── entity/Order.java, OrderItem.java</span><br><span class="line">│   │   └── valueobject/Money.java, Address.java, OrderId.java</span><br><span class="line">│   └── repository/OrderRepository.java        # 仅接口</span><br><span class="line">└── infrastructure/persistence/</span><br><span class="line">    ├── OrderPO.java                           # 值对象在此拆列 / 序列化</span><br><span class="line">    └── OrderMapper.java</span><br></pre></td></tr></table></figure>
+
+<p>先看两种建模方式的差别。把描述性属性平铺、就地修改，最省事，也最容易出事：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 方式 A：属性平铺 + 就地修改，没有概念整体，也没有不可变约束</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> Long id;</span><br><span class="line">    <span class="keyword">private</span> String province;</span><br><span class="line">    <span class="keyword">private</span> String city;</span><br><span class="line">    <span class="keyword">private</span> String detail;</span><br><span class="line">    <span class="keyword">private</span> <span class="type">double</span> amount;</span><br><span class="line">    <span class="keyword">private</span> String currency;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setDetail</span><span class="params">(String detail)</span> &#123; <span class="built_in">this</span>.detail = detail; &#125;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">addAmount</span><span class="params">(<span class="type">double</span> delta)</span> &#123; <span class="built_in">this</span>.amount += delta; &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>省市区散落、无法整体校验，<code>double</code> 有精度问题，金额和币种可以各自被改，历史同样会被改写。改成值对象，描述收成整体，替换由聚合根把守：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 方式 B：描述性概念收成不可变值对象，整体替换</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> OrderId id;</span><br><span class="line">    <span class="keyword">private</span> Address address;          <span class="comment">// 值对象，无 ID</span></span><br><span class="line">    <span class="keyword">private</span> Money total;              <span class="comment">// 值对象</span></span><br><span class="line">    <span class="keyword">private</span> OrderStatus status;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">changeAddress</span><span class="params">(Address newAddress)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (status != OrderStatus.CREATED) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalStateException</span>(<span class="string">&quot;已支付订单不可修改收货地址&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="built_in">this</span>.address = Objects.requireNonNull(newAddress);   <span class="comment">// 整体替换</span></span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>不可变值对象是可运行、可验证的，关键在 <code>final</code> 字段、无 setter、<code>equals/hashCode</code> 由属性决定：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 值对象：全部字段 final，相等性由属性决定，运算返回新对象</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Money</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> BigDecimal amount;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> Currency currency;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">Money</span><span class="params">(BigDecimal amount, Currency currency)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.amount = Objects.requireNonNull(amount)</span><br><span class="line">                             .setScale(<span class="number">2</span>, RoundingMode.HALF_UP);</span><br><span class="line">        <span class="built_in">this</span>.currency = Objects.requireNonNull(currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> Money <span class="title function_">zero</span><span class="params">(Currency currency)</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Money</span>(BigDecimal.ZERO, currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Money <span class="title function_">plus</span><span class="params">(Money other)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (!<span class="built_in">this</span>.currency.equals(other.currency)) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalArgumentException</span>(<span class="string">&quot;币种不一致，不可相加&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Money</span>(<span class="built_in">this</span>.amount.add(other.amount), <span class="built_in">this</span>.currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">boolean</span> <span class="title function_">equals</span><span class="params">(Object o)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (<span class="built_in">this</span> == o) &#123; <span class="keyword">return</span> <span class="literal">true</span>; &#125;</span><br><span class="line">        <span class="keyword">if</span> (!(o <span class="keyword">instanceof</span> Money)) &#123; <span class="keyword">return</span> <span class="literal">false</span>; &#125;</span><br><span class="line">        <span class="type">Money</span> <span class="variable">money</span> <span class="operator">=</span> (Money) o;</span><br><span class="line">        <span class="keyword">return</span> amount.compareTo(money.amount) == <span class="number">0</span></span><br><span class="line">                &amp;&amp; currency.equals(money.currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">int</span> <span class="title function_">hashCode</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> Objects.hash(amount.stripTrailingZeros(), currency);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>两处细节值得留意：<code>equals</code> 用 <code>compareTo</code> 而非 <code>BigDecimal.equals</code>，避免 <code>1.0</code> 与 <code>1.00</code> 被判为不等；<code>hashCode</code> 相应先 <code>stripTrailingZeros</code>，保证相等的对象哈希一致。<code>plus</code> 返回新对象，从不修改自身——不可变性不是约定，是结构上的保证。</p>
+<p>持久化时把值对象翻译成列，领域层不感知 ORM：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 基础设施层： Money 拆两列， Address 存 JSON，转换只在此处发生</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">OrderPO</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> Long id;</span><br><span class="line">    <span class="keyword">private</span> BigDecimal amount;</span><br><span class="line">    <span class="keyword">private</span> String currency;</span><br><span class="line">    <span class="keyword">private</span> String addressJson;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Money <span class="title function_">toMoney</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Money</span>(amount, Currency.getInstance(currency));</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Address <span class="title function_">toAddress</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> Address.fromJson(addressJson);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>给值对象加 ID 和 setter。</strong> 把描述性对象实体化，一次修改回溯到全部历史，开篇的事故就是这么来的。</li>
+<li><strong>用 <code>double</code> 存金额、<code>String</code> 存散落属性。</strong> 精度、币种、整体校验全部失守，属性零碎到无法表达概念。</li>
+<li><strong>在值对象里塞可变状态与业务逻辑。</strong> 它只负责描述，行为应留在实体或领域服务。</li>
+<li><strong>所有对象一律建成实体，或一律建成值对象。</strong> 跳过取舍，等于把判断交给 ORM 或表结构。</li>
+<li><strong>为值对象建独立表、加主键，又不承认它是实体。</strong> 语义与存储互相打架，改数据时无所适从。</li>
+</ol>
+<p>以下情形建议<strong>不引入值对象</strong>，或保持最简：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>以 CRUD、报表为主，对象几乎没有行为</td>
+<td>直接用 PO &#x2F; DTO 平铺，不抽值对象</td>
+</tr>
+<tr>
+<td>对象需被多处独立修改且改动要留痕</td>
+<td>建成实体，别用值对象</td>
+</tr>
+<tr>
+<td>团队不熟悉自定义类型映射、ORM 难落地</td>
+<td>先用嵌入式列手工转换，不急上 JSON</td>
+</tr>
+<tr>
+<td>需按值对象内部属性高频检索</td>
+<td>用嵌入式列或独立表，别用 JSON</td>
+</tr>
+<tr>
+<td>一次性交付、无后续演进</td>
+<td>保持简单数据模型，不做不可变封装</td>
+</tr>
+</tbody></table>
+<p>判断收成一问：<strong>一组属性是否总是一起出现、一起校验、一起被替换？</strong> 是，抽成值对象才划算；否则平铺更直观。</p>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>维度</th>
+<th>实体</th>
+<th>值对象</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>区分方式</td>
+<td>唯一标识</td>
+<td>全部属性值</td>
+</tr>
+<tr>
+<td>可变性</td>
+<td>可变，属性随时间演进</td>
+<td>不可变，整体替换</td>
+</tr>
+<tr>
+<td>相等性</td>
+<td>标识相同即同一对象</td>
+<td>属性全等即相等</td>
+</tr>
+<tr>
+<td>生命周期</td>
+<td>有，需被资源库追踪</td>
+<td>无，依附于实体</td>
+</tr>
+<tr>
+<td>典型例子</td>
+<td><code>Order</code>、<code>PaymentInstruction</code></td>
+<td><code>Money</code>、<code>Address</code>、<code>OrderId</code></td>
+</tr>
+<tr>
+<td>持久化</td>
+<td>独立表，主键标识</td>
+<td>嵌入式列 &#x2F; JSON &#x2F; 独立表</td>
+</tr>
+<tr>
+<td>常见误区</td>
+<td>建成只有 ID 的贫血对象</td>
+<td>加主键、加 setter</td>
+</tr>
+</tbody></table>
+<p>一条主线：<strong>有身份、要留痕 → 实体；只描述、可替换 → 值对象；一起出现、一起校验 → 抽成值对象</strong>。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>标识决定”是不是同一个”，不可变性决定”改动会不会外溢”。值对象不是简化版的实体，而是另一类没有身份的东西：它用整体替换换取确定性，用不可变换取历史不被改写。把这两者用对，<code>order</code> 表少几列、多几列倒是次要，真正省下的是那些因共享可变状态而产生的对账与客诉。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>欧创新《DDD 实战课》</li>
+<li>Eric Evans, <em>Domain-Driven Design: Tackling Complexity in the Heart of Software</em>, 2004</li>
+<li>Vaughn Vernon, <em>Implementing Domain-Driven Design</em>, 2013</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/" title="DDD（四）实体与值对象——领域模型的基础单元">https://xssdpgy.github.io/2023/03/11/DDD（四）实体与值对象——领域模型的基础单元/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/DDD/" rel="tag"># DDD</a>
+              <a href="/tags/%E9%A2%86%E5%9F%9F%E5%BB%BA%E6%A8%A1/" rel="tag"># 领域建模</a>
+              <a href="/tags/%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1/" rel="tag"># 实体与值对象</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/03/09/DDD%EF%BC%88%E4%B8%89%EF%BC%89%E9%80%9A%E7%94%A8%E8%AF%AD%E8%A8%80%E4%B8%8E%E9%99%90%E7%95%8C%E4%B8%8A%E4%B8%8B%E6%96%87/" rel="prev" title="DDD（三）通用语言与限界上下文">
+      <i class="fa fa-chevron-left"></i> DDD（三）通用语言与限界上下文
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/03/16/DDD%EF%BC%88%E4%BA%94%EF%BC%89%E8%81%9A%E5%90%88%E4%B8%8E%E8%81%9A%E5%90%88%E6%A0%B9%E2%80%94%E2%80%94%E4%B8%80%E8%87%B4%E6%80%A7%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8E%9F%E5%88%99/" rel="next" title="DDD（五）聚合与聚合根——一致性边界与设计原则">
+      DDD（五）聚合与聚合根——一致性边界与设计原则 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '0f6f6e6b396dc755832884b82ca1b8a0',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

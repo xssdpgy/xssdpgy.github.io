@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言2 万 TPS 的订单同步写进数据库不成立，队列的作用不是提速，是按数据库能承受的速率把请求排起来。比如单 SKU、库存 5000 件、30 万人预约，整点开抢那几秒下单请求堆到 2 万 TPS，而库只吃得下 2000 TPS。把 30 万个请求全塞进队列同样错，注定失败的该在入口就挡掉，只有抢得到资格的请求才值得排队。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（七）消息队列削峰与投递语义">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言2 万 TPS 的订单同步写进数据库不成立，队列的作用不是提速，是按数据库能承受的速率把请求排起来。比如单 SKU、库存 5000 件、30 万人预约，整点开抢那几秒下单请求堆到 2 万 TPS，而库只吃得下 2000 TPS。把 30 万个请求全塞进队列同样错，注定失败的该在入口就挡掉，只有抢得到资格的请求才值得排队。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-06-13T14:23:25.000Z">
+<meta property="article:modified_time" content="2023-06-13T14:23:25.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="消息队列">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（七）消息队列削峰与投递语义 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（七）消息队列削峰与投递语义
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-13 22:23:25" itemprop="dateCreated datePublished" datetime="2023-06-13T22:23:25+08:00">2023-06-13</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>2 万 TPS 的订单同步写进数据库不成立，队列的作用不是提速，是按数据库能承受的速率把请求排起来。比如单 SKU、库存 5000 件、30 万人预约，整点开抢那几秒下单请求堆到 2 万 TPS，而库只吃得下 2000 TPS。把 30 万个请求全塞进队列同样错，注定失败的该在入口就挡掉，只有抢得到资格的请求才值得排队。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>削峰填谷的前提是写高峰足够短。秒杀的写压力集中在开抢后几秒到十几秒，为这十几秒扩一批数据库节点、活动结束再缩回去，数据迁移和缩容的成本按天算，不划算。队列是暂存容器，把高速生产和低速消费之间的时间差兜住：入库速率由消费端定，不由入口流量定，消费端按库能承受的 TPS 固定并发，落到库上的请求数就可控。请求短暂堆积是可接受的，代价是用户要等几秒才知道结果。</p>
+<p>投递语义得说清楚，不能含糊成「保证不丢」：</p>
+<table>
+<thead>
+<tr>
+<th>语义</th>
+<th>含义</th>
+<th>成本</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>至多一次</td>
+<td>可能丢，不会重</td>
+<td>最低</td>
+</tr>
+<tr>
+<td>至少一次</td>
+<td>不会丢，可能重</td>
+<td>生产重试、副本确认、消费幂等</td>
+</tr>
+<tr>
+<td>仅消费一次</td>
+<td>最终效果等同一次</td>
+<td>在上面之上再加唯一键与事务</td>
+</tr>
+</tbody></table>
+<p>「仅消费一次」既不是「保证不丢」，也不是「消息不重复」。网络抖动、机器宕机、消费进度没提交，重复投递躲不掉，工业上完全消灭重复做不到；能交付的是至少一次投递加消费幂等，让重复消息处理完的结果和只处理一次相同。语义含糊过去，方案里就会漏掉幂等和确认，直到库存被扣两次才发现。</p>
+<p>消息丢失分布在三个环节。生产写入时超时重传两三次，重传本身带来重复；队列存储靠多副本，等全部副本确认才返回成功，代价是写延迟变高，异步刷盘遇上掉电仍会丢未落盘的那段；消费环节是接收、处理、提交进度三步，顺序不能反，处理完才能提交进度，否则处理失败时进度已经前移，那条消息再也不会被处理。处理完还没提交就宕机，重启后会重复消费一次，这正是幂等要接住的地方。</p>
+<pre class="mermaid">
+flowchart LR
+    P[&quot;生产端：超时重传 2-3 次&quot;] --&gt; Q[&quot;队列：多副本 + 全副本确认&quot;]
+    Q --&gt; C[&quot;消费端：接收 → 处理 → 提交进度&quot;]
+    C --&gt; I{&quot;消息 ID 已处理&quot;}
+    I --&gt;|是| SKIP[&quot;丢弃，效果不变&quot;]
+    I --&gt;|否| TX[&quot;事务内写订单 + 记 ID&quot;]
+    TX --&gt; E[&quot;最终效果：仅消费一次&quot;]
+    P -.-&gt; NOTE[&quot;至少一次投递：不丢，但会重&quot;]
+</pre>
+
+<p>延迟治理看三处。堆积等于生产总数减去消费进度，这是基础监控；想知道端到端等了多久，得放带时间戳的探测消息，消费时比时间差，按时间维度定报警阈值更直观。分区数决定消费并行度，一个分区只能被一个消费者消费，分区数没上去，加多少消费者都闲着；不加分区就在消费者内部用线程池并行处理。拉不到消息要退避等待，10 到 100 毫秒递增即可，一直空转轮询会把 CPU 打满。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把秒杀的量级摆出来：单 SKU、库存 5000 件、预约 30 万人、整点开抢，日常下单 200 QPS、P99 60ms，峰值 2 万 QPS，验收目标 2 万 QPS 下 P99 &lt; 200ms、P999 &lt; 1s、错误率 &lt; 0.1%，链路下单 → 锁库存 → 支付 → 发货，分层结论是网关 6 台、应用 20 台、缓存 3 分片、数据库同步写入不成立，订单写入能力 2000 TPS。</p>
+<p>30 万人抢 5000 件，98% 以上的请求注定失败。入口就要把无效请求挡在队列之外：网关限流、资格预判、库存预检三步做完，再按库存的 2 倍放约 1 万条请求入队，余量留给校验失败和重复提交。消费端固定并发，按 2000 TPS 写库，1 万条约 5 秒排空；只算真正能成交的 5000 条是 2.5 秒。这个时长是算得出来的，不是拍的。</p>
+<p>用户端反馈要配套。请求入队就返回「排队中」，别让连接同步等着；前端轮询或等推送拿最终结果。超过 10 秒还没结果要给明确状态，不能一直转圈。库存耗尽后，队列里堆积的请求直接丢弃并回「已售罄」，让它们继续排只会拖长排队时长、推高堆积监控，用户还以为有戏。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>取值</th>
+<th>依据</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>峰值下单</td>
+<td>2 万 TPS</td>
+<td>30 万预约整点开抢</td>
+</tr>
+<tr>
+<td>库存</td>
+<td>5000 件</td>
+<td>单 SKU</td>
+</tr>
+<tr>
+<td>数据库写入能力</td>
+<td>2000 TPS</td>
+<td>分层容量结论</td>
+</tr>
+<tr>
+<td>入队有效请求</td>
+<td>约 1 万条</td>
+<td>库存的 2 倍，留余量</td>
+</tr>
+<tr>
+<td>排队时长</td>
+<td>约 5 秒</td>
+<td>1 万 &#x2F; 2000</td>
+</tr>
+<tr>
+<td>超时兜底</td>
+<td>10 秒</td>
+<td>超过就给明确状态</td>
+</tr>
+</tbody></table>
+<pre class="mermaid">
+flowchart TB
+    U[&quot;30 万预约，整点开抢&quot;] --&gt; GW[&quot;网关 6 台：限流 &#x2F; 资格预判 &#x2F; 库存预检&quot;]
+    GW --&gt;|挡掉 98% 以上无效请求| DROP[&quot;直接回：已售罄 &#x2F; 无资格&quot;]
+    GW --&gt;|放行约 1 万条有效请求| MQ[&quot;消息队列：削峰排队&quot;]
+    MQ --&gt; CONS[&quot;消费端：固定并发，按 2000 TPS&quot;]
+    CONS --&gt; DB[&quot;关系库：订单落库&quot;]
+    CONS --&gt; RT[&quot;用户端：入队即回排队中，轮询结果&quot;]
+    MQ -.-&gt; MON[&quot;堆积监控：超阈值加消费机&quot;]
+</pre>
+
+<p>幂等在这一链路里是硬要求。生产端超时重传、消费完未提交进度就宕机重启，都会产生重复消息；同一业务请求重试时必须沿用同一个消息 ID，每次重试换一个 ID，消费端就认不出重复，幂等直接失效。订单写入和「已消费 ID」记录要放在同一个本地事务里，重复消息靠唯一键拦住，而不是靠查一次库碰运气。</p>
+<p>延迟这边，分区数要先规划到不少于消费实例数，否则加机器没用；堆积设阈值，超了再加消费机或扩分区；探测消息盯着端到端延迟别越过 10 秒这条线。订单主流程之外的发券、加积分，丢到另一组队列异步处理，能把单次消费耗时压下来，排队时长跟着缩短，代价是多一处消费逻辑要维护。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/</span><br><span class="line">│   └── web/SeckillController.java</span><br><span class="line">├── application/</span><br><span class="line">│   └── SeckillAppService.java</span><br><span class="line">├── infrastructure/</span><br><span class="line">│   ├── mq/OrderMessage.java</span><br><span class="line">│   ├── mq/OrderProducer.java</span><br><span class="line">│   ├── mq/IdempotentOrderConsumer.java</span><br><span class="line">│   └── persistence/OrderDao.java</span><br><span class="line">└── config/MqConfig.java</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.mq;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> javax.sql.DataSource;</span><br><span class="line"><span class="keyword">import</span> java.sql.Connection;</span><br><span class="line"><span class="keyword">import</span> java.sql.PreparedStatement;</span><br><span class="line"><span class="keyword">import</span> java.sql.ResultSet;</span><br><span class="line"><span class="keyword">import</span> java.sql.SQLException;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 至少一次投递下的幂等消费：订单落库与消费记录在同一事务内完成。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">IdempotentOrderConsumer</span> &#123;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">CHECK</span> <span class="operator">=</span></span><br><span class="line">        <span class="string">&quot;SELECT 1 FROM consumed_message WHERE msg_id = ?&quot;</span>;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">INSERT_ORDER</span> <span class="operator">=</span></span><br><span class="line">        <span class="string">&quot;INSERT INTO seckill_order(order_id, sku_id, user_id, created_at) VALUES (?, ?, ?, ?)&quot;</span>;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">MARK</span> <span class="operator">=</span></span><br><span class="line">        <span class="string">&quot;INSERT INTO consumed_message(msg_id, sku_id, user_id, created_at) VALUES (?, ?, ?, ?)&quot;</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> DataSource dataSource;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">IdempotentOrderConsumer</span><span class="params">(DataSource dataSource)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.dataSource = dataSource;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onMessage</span><span class="params">(OrderMessage msg)</span> &#123;</span><br><span class="line">        <span class="keyword">try</span> (<span class="type">Connection</span> <span class="variable">conn</span> <span class="operator">=</span> dataSource.getConnection()) &#123;</span><br><span class="line">            <span class="keyword">if</span> (alreadyConsumed(conn, msg.getMsgId())) &#123;</span><br><span class="line">                <span class="keyword">return</span>;                       <span class="comment">// 重复投递：直接确认，不写第二笔订单</span></span><br><span class="line">            &#125;</span><br><span class="line">            conn.setAutoCommit(<span class="literal">false</span>);</span><br><span class="line">            <span class="keyword">try</span> &#123;</span><br><span class="line">                insertOrder(conn, msg);</span><br><span class="line">                markConsumed(conn, msg);</span><br><span class="line">                conn.commit();</span><br><span class="line">            &#125; <span class="keyword">catch</span> (SQLException e) &#123;</span><br><span class="line">                conn.rollback();</span><br><span class="line">                <span class="keyword">throw</span> e;                      <span class="comment">// 交回队列，等待下一次投递</span></span><br><span class="line">            &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">                conn.setAutoCommit(<span class="literal">true</span>);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; <span class="keyword">catch</span> (SQLException e) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">RuntimeException</span>(<span class="string">&quot;consume failed: &quot;</span> + msg.getMsgId(), e);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="type">boolean</span> <span class="title function_">alreadyConsumed</span><span class="params">(Connection conn, String msgId)</span> <span class="keyword">throws</span> SQLException &#123;</span><br><span class="line">        <span class="keyword">try</span> (<span class="type">PreparedStatement</span> <span class="variable">ps</span> <span class="operator">=</span> conn.prepareStatement(CHECK)) &#123;</span><br><span class="line">            ps.setString(<span class="number">1</span>, msgId);</span><br><span class="line">            <span class="keyword">try</span> (<span class="type">ResultSet</span> <span class="variable">rs</span> <span class="operator">=</span> ps.executeQuery()) &#123;</span><br><span class="line">                <span class="keyword">return</span> rs.next();</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">insertOrder</span><span class="params">(Connection conn, OrderMessage msg)</span> <span class="keyword">throws</span> SQLException &#123;</span><br><span class="line">        <span class="keyword">try</span> (<span class="type">PreparedStatement</span> <span class="variable">ps</span> <span class="operator">=</span> conn.prepareStatement(INSERT_ORDER)) &#123;</span><br><span class="line">            ps.setString(<span class="number">1</span>, msg.getMsgId());</span><br><span class="line">            ps.setLong(<span class="number">2</span>, msg.getSkuId());</span><br><span class="line">            ps.setLong(<span class="number">3</span>, msg.getUserId());</span><br><span class="line">            ps.setLong(<span class="number">4</span>, msg.getCreatedAt());</span><br><span class="line">            ps.executeUpdate();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">markConsumed</span><span class="params">(Connection conn, OrderMessage msg)</span> <span class="keyword">throws</span> SQLException &#123;</span><br><span class="line">        <span class="keyword">try</span> (<span class="type">PreparedStatement</span> <span class="variable">ps</span> <span class="operator">=</span> conn.prepareStatement(MARK)) &#123;</span><br><span class="line">            ps.setString(<span class="number">1</span>, msg.getMsgId());</span><br><span class="line">            ps.setLong(<span class="number">2</span>, msg.getSkuId());</span><br><span class="line">            ps.setLong(<span class="number">3</span>, msg.getUserId());</span><br><span class="line">            ps.setLong(<span class="number">4</span>, msg.getCreatedAt());</span><br><span class="line">            ps.executeUpdate();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">OrderMessage</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String msgId;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> skuId;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> userId;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> createdAt;</span><br><span class="line"></span><br><span class="line">    OrderMessage(String msgId, <span class="type">long</span> skuId, <span class="type">long</span> userId, <span class="type">long</span> createdAt) &#123;</span><br><span class="line">        <span class="built_in">this</span>.msgId = msgId;</span><br><span class="line">        <span class="built_in">this</span>.skuId = skuId;</span><br><span class="line">        <span class="built_in">this</span>.userId = userId;</span><br><span class="line">        <span class="built_in">this</span>.createdAt = createdAt;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    String <span class="title function_">getMsgId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> msgId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="type">long</span> <span class="title function_">getSkuId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> skuId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="type">long</span> <span class="title function_">getUserId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> userId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="type">long</span> <span class="title function_">getCreatedAt</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> createdAt;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这段实现有明确边界：<code>consumed_message</code> 要对 msg_id 建唯一索引，先查后写在并发下有窗口，真正兜底的是唯一键冲突回滚，不是那次查询；msg_id 由生产端对同一业务请求稳定生成，换 ID 就等于没有幂等。订单和消费记录在同一个本地事务里，跨库时别硬套，改成唯一键加补偿。幂等表会随订单量一直涨，要定期归档。队列仍可能重投，「仅消费一次」说的是效果，不是投递次数。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>把「仅消费一次」说成「保证不丢」。</strong> 丢和重是两件事，含糊过去，方案里就漏了幂等和副本确认，库存被扣两次才发现。</li>
+<li><strong>先提交消费进度再处理消息。</strong> 处理失败时进度已经前移，那条消息再也不会被处理，等于永久丢失，顺序不能反。</li>
+<li><strong>生产端无限重试，或每次重试换一个消息 ID。</strong> 前者把队列打满，后者让消费端认不出重复，幂等直接失效。</li>
+<li><strong>靠加消费者降延迟，却不加分区。</strong> 一个分区只能被一个消费者消费，分区数没上去，多出来的消费者全闲着，钱花了延迟没动。</li>
+<li><strong>把 30 万个预约请求全塞进队列。</strong> 队列不是垃圾桶，98% 注定失败的请求该在入口挡掉，否则排队时长和堆积监控一起被拖垮。</li>
+</ol>
+<p>下面这些情况，这套削峰与幂等方案可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>写流量平稳且远低于库能力</td>
+<td>没有峰要削，队列只增加延迟和组件</td>
+<td>同步写库，配好连接池</td>
+</tr>
+<tr>
+<td>日志、指标、行为埋点</td>
+<td>偶发丢几条可接受</td>
+<td>至多一次投递，不做幂等</td>
+</tr>
+<tr>
+<td>内部后台，端到端延迟不敏感</td>
+<td>堆积几秒无感</td>
+<td>单消费者串行处理</td>
+</tr>
+<tr>
+<td>通知、站内信等可重复内容</td>
+<td>重复送达用户能容忍</td>
+<td>不建幂等表，简单重投</td>
+</tr>
+<tr>
+<td>单分区低吞吐场景</td>
+<td>并行度不是瓶颈</td>
+<td>不加分区，不加线程池</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>决策点</th>
+<th>结论</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2 万 TPS 同步写库</td>
+<td>不成立，改排队消费</td>
+<td>用户端多等几秒</td>
+</tr>
+<tr>
+<td>入队请求量</td>
+<td>只放有效请求，约 1 万条</td>
+<td>入口要做资格预判</td>
+</tr>
+<tr>
+<td>消费速率</td>
+<td>按库的 2000 TPS 固定</td>
+<td>排队时长由它决定</td>
+</tr>
+<tr>
+<td>仅消费一次</td>
+<td>至少一次投递加消费幂等</td>
+<td>幂等表、事务、唯一键</td>
+</tr>
+<tr>
+<td>进度提交顺序</td>
+<td>处理完才提交</td>
+<td>宕机时会重复消费</td>
+</tr>
+<tr>
+<td>延迟治理</td>
+<td>分区数、消费并行度、堆积监控</td>
+<td>分区数要先规划</td>
+</tr>
+<tr>
+<td>结果反馈</td>
+<td>入队即回排队中，超 10 秒给状态</td>
+<td>前端要轮询或推送</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>削峰不是把峰值变没，是把 2 万 TPS 的瞬时压力摊成数据库吃得下的 2000 TPS，代价是用户端多等几秒，这几秒要用明确的排队状态换回来。投递语义得说清楚：能交付的是至少一次加消费幂等，最终效果和一次相同，既不承诺不丢，也不靠队列消灭重复。延迟治理盯分区数、消费并行度和堆积，加消费者之前先看分区够不够。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Gregor Hohpe, Bobby Woolf, <em>Enterprise Integration Patterns</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/" title="高并发（七）消息队列削峰与投递语义">https://xssdpgy.github.io/2023/06/13/高并发（七）消息队列削峰与投递语义/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97/" rel="tag"># 消息队列</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/06/07/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AD%EF%BC%89%E7%BC%93%E5%AD%98%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E7%A9%BF%E9%80%8F%E9%98%B2%E6%8A%A4%E4%B8%8E%E9%9D%99%E6%80%81%E5%8A%A0%E9%80%9F/" rel="prev" title="高并发（六）缓存高可用、穿透防护与静态加速">
+      <i class="fa fa-chevron-left"></i> 高并发（六）缓存高可用、穿透防护与静态加速
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/" rel="next" title="高并发（八）服务化拆分与 RPC 调用链">
+      高并发（八）服务化拆分与 RPC 调用链 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'c74e6bf5fa7cb82e0307a330217f1c41',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

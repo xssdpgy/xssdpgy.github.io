@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言事务边界画大一圈，大促时就会变成死锁和超卖。本篇讲聚合与聚合根的划法：按不变条件而不是按名词圈边界，四条设计原则怎么用，跨聚合的状态变化为什么只能交给领域事件。 大促开始第 11 分钟，订单库开始大面积报死锁与锁等待超时，下单接口 P99 从 80 毫秒飙到 4 秒；几乎同时冒出超卖工单，却没人能说清库存究竟是在哪一步被扣穿的。排查下来，两类异常指向同一段代码——一个被团队称作 Order 的">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DDD（五）聚合与聚合根——一致性边界与设计原则">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/03/16/DDD%EF%BC%88%E4%BA%94%EF%BC%89%E8%81%9A%E5%90%88%E4%B8%8E%E8%81%9A%E5%90%88%E6%A0%B9%E2%80%94%E2%80%94%E4%B8%80%E8%87%B4%E6%80%A7%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8E%9F%E5%88%99/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言事务边界画大一圈，大促时就会变成死锁和超卖。本篇讲聚合与聚合根的划法：按不变条件而不是按名词圈边界，四条设计原则怎么用，跨聚合的状态变化为什么只能交给领域事件。 大促开始第 11 分钟，订单库开始大面积报死锁与锁等待超时，下单接口 P99 从 80 毫秒飙到 4 秒；几乎同时冒出超卖工单，却没人能说清库存究竟是在哪一步被扣穿的。排查下来，两类异常指向同一段代码——一个被团队称作 Order 的">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-03-16T01:26:39.000Z">
+<meta property="article:modified_time" content="2023-03-16T01:26:39.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="DDD">
+<meta property="article:tag" content="微服务">
+<meta property="article:tag" content="聚合">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/03/16/DDD%EF%BC%88%E4%BA%94%EF%BC%89%E8%81%9A%E5%90%88%E4%B8%8E%E8%81%9A%E5%90%88%E6%A0%B9%E2%80%94%E2%80%94%E4%B8%80%E8%87%B4%E6%80%A7%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8E%9F%E5%88%99/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>DDD（五）聚合与聚合根——一致性边界与设计原则 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/03/16/DDD%EF%BC%88%E4%BA%94%EF%BC%89%E8%81%9A%E5%90%88%E4%B8%8E%E8%81%9A%E5%90%88%E6%A0%B9%E2%80%94%E2%80%94%E4%B8%80%E8%87%B4%E6%80%A7%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8E%9F%E5%88%99/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          DDD（五）聚合与聚合根——一致性边界与设计原则
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-03-16 09:26:39" itemprop="dateCreated datePublished" datetime="2023-03-16T09:26:39+08:00">2023-03-16</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>事务边界画大一圈，大促时就会变成死锁和超卖。本篇讲聚合与聚合根的划法：按不变条件而不是按名词圈边界，四条设计原则怎么用，跨聚合的状态变化为什么只能交给领域事件。</p>
+<p>大促开始第 11 分钟，订单库开始大面积报死锁与锁等待超时，下单接口 P99 从 80 毫秒飙到 4 秒；几乎同时冒出超卖工单，却没人能说清库存究竟是在哪一步被扣穿的。排查下来，两类异常指向同一段代码——一个被团队称作 <code>Order</code> 的类，把订单项、SKU 库存、支付流水、发货单全装进同一个聚合，任何一次下单都在一个本地事务里锁住四张表的十几行记录。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：一个聚合包办整条履约链路，事务边界被放大到整库</span></span><br><span class="line"><span class="meta">@Service</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">OrderService</span> &#123;</span><br><span class="line">    <span class="meta">@Transactional</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">placeOrder</span><span class="params">(PlaceOrderCmd cmd)</span> &#123;</span><br><span class="line">        <span class="type">Order</span> <span class="variable">order</span> <span class="operator">=</span> orderRepository.findById(cmd.getOrderId());</span><br><span class="line">        order.addItem(cmd.getSkuId(), cmd.getQuantity());</span><br><span class="line">        stockRepository.deduct(cmd.getSkuId(), cmd.getQuantity());</span><br><span class="line">        paymentRepository.create(cmd.getOrderId(), cmd.getAmount());</span><br><span class="line">        shipmentRepository.reserve(cmd.getOrderId());</span><br><span class="line">        orderRepository.save(order);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>Order</code> 名义上是聚合根，实际上成了一段跨表事务的入口。真正致命的不是 <code>@Transactional</code> 标得太大，而是没人说得清哪些对象必须在同一瞬间保持一致。于是库存行被下单、支付回调、发货批处理三类流量争抢；订单项金额与可售库存本不需要同生共死，却被绑进同一把锁；<code>deduct</code> 与 <code>create</code> 散落在应用服务里，超卖时无法判定哪一处是权威。</p>
+<p>事务边界画错，调隔离级别、加索引、拆库都只是缓解。要收敛的是边界本身：把「必须同时成功」的东西圈在一起，把其余的请出去。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p><strong>聚合</strong>是一组生命周期与业务规则紧密绑定的对象的集合，也是数据修改的最小一致性单元：聚合内的不变条件由一次事务守住，聚合之外不保证强一致。<strong>聚合根</strong>是聚合内唯一对外的实体，拥有全局唯一标识，外部只能通过它访问聚合内对象；聚合与聚合之间只通过聚合根的标识互相引用，不做对象引用。一个聚合对应一个<strong>资源库</strong>，持久化以聚合为单位整体读写。</p>
+<p>这里的不变条件，指任何时刻都必须成立的业务断言，例如「订单实付金额等于各订单项小计之和」「SKU 可用数量不小于零」。判断两个对象该不该进同一个聚合，只问一句：它们之间是否存在必须在同一事务内成立的不变条件。有则同聚合，无则分开。按「看起来有关」聚类，是大聚合最常见的起点。</p>
+<p>拆分前后，事务边界的差别一目了然：</p>
+<pre class="mermaid">
+flowchart LR
+    subgraph BEFORE[&quot;拆分前：一个事务锁住全部&quot;]
+        T1[&quot;事务 T1&quot;] --&gt; O1[&quot;订单 + 订单项&quot;]
+        T1 --&gt; I1[&quot;SKU 库存&quot;]
+        T1 --&gt; P1[&quot;支付单&quot;]
+        T1 --&gt; F1[&quot;发货单&quot;]
+    end
+    subgraph AFTER[&quot;拆分后：四个事务 + 事件串联&quot;]
+        O2[&quot;T2 订单&quot;] --&gt;|OrderCreated| I2[&quot;T3 库存&quot;]
+        P2[&quot;T4 支付单&quot;] --&gt;|PaymentCompleted| F2[&quot;T5 发货单&quot;]
+    end
+</pre>
+
+<p>左边一个事务持有四组行锁，任意一处慢都会拖住整条链路；右边四个事务各管一组数据，彼此通过事件衔接，锁的粒度与持有时间都降了一个量级。聚合是限界上下文内部的逻辑边界，事务则是聚合的运行时投影——边界画对了，代码里的 <code>@Transactional</code> 才有处可放。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把订单履约链路按不变条件重新切一遍。</p>
+<ul>
+<li><strong>订单聚合</strong>：订单、订单项、收货地址。不变条件是总额等于各订单项小计之和、订单项非空、已支付订单不可修改地址。收货地址无独立标识、依附订单存在，作为值对象并入。</li>
+<li><strong>库存聚合</strong>：SKU 可售库存。不变条件是可用量等于总量减占用量且不小于零，单 SKU 的扣减必须串行。</li>
+<li><strong>支付单聚合</strong>：支付单与支付流水。不变条件是支付金额与订单应付一致、同一渠道流水号只入账一次。</li>
+<li><strong>发货单聚合</strong>：发货单与明细。不变条件是发货数量不超过已支付数量。</li>
+</ul>
+<p>这四组不变条件彼此并不要求在同一瞬间成立：用户下单成功时，库存可以晚几百毫秒锁定；支付完成后，发货单可以稍后生成。它们因此分属四个聚合、四个本地事务。落到设计上，是四条原则：</p>
+<ol>
+<li><strong>在一致性边界内建模真正的不变条件。</strong> 聚合不是把相关的类装在一起，而是把必须同时成立的断言圈起来。订单与订单项有总额断言，同聚合；SKU 库存与订单之间只有「数量够不够」的校验关系，不构成同时成立的不变条件，必须拆出。</li>
+<li><strong>设计小聚合。</strong> 聚合越大，一次事务持有的行锁越多、持锁时间越长，并发冲突概率随聚合内实体数近似线性上升。把库存拆出后，下单事务只锁订单与订单项两三行，大促的锁等待从秒级回到毫秒级。</li>
+<li><strong>通过唯一标识引用其它聚合。</strong> 订单里保存 <code>skuId</code>、<code>paymentId</code>，而不是持有 <code>Inventory</code>、<code>Payment</code> 对象；跨聚合加载由应用服务按标识分别调用各自资源库。对象引用会让边界在代码里消失，重构时无从拆起。</li>
+<li><strong>边界之外使用最终一致性。</strong> 一次事务最多改一个聚合；涉及多个聚合就用领域事件异步串联，发布方提交后即返回，不等待订阅方。</li>
+</ol>
+<p>原则四落到履约链路：<code>OrderCreated</code> 触发库存锁定，<code>PaymentCompleted</code> 触发发货单创建。代价是下单接口返回时库存尚未锁定，存在「订单已建、库存未锁」的中间态。处理办法不是退回分布式事务，而是把中间态显式建模：库存不足时发布 <code>StockRejected</code>，交易上下文据此把订单置为「已取消」并触发退款。换来的是库存上下文可以独立发布、独立扩缩，不被下单流量直接拖垮。</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant U as 用户
+    participant O as 交易上下文
+    participant I as 库存上下文
+    participant P as 支付上下文
+    participant F as 履约上下文
+    U-&gt;&gt;O: 提交订单
+    O-&gt;&gt;O: T2 创建订单聚合
+    O--&gt;&gt;I: OrderCreated
+    I-&gt;&gt;I: T3 锁定库存
+    O--&gt;&gt;U: 下单受理
+    U-&gt;&gt;P: 发起支付
+    P-&gt;&gt;P: T4 支付入账
+    P--&gt;&gt;F: PaymentCompleted
+    P--&gt;&gt;O: PaymentCompleted
+    F-&gt;&gt;F: T5 生成发货单
+</pre>
+
+<p>四个事务彼此独立，事件是唯一的连接。这里有一条判断线值得记住：<strong>不变条件必须在同一事务内守住，流程状态可以跨事务最终一致</strong>。把流程状态误当成不变条件，是大聚合最顽固的成因。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>边界确定后，目录要能直接读出边界。交易上下文按聚合分包的形态如下：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">order-context/</span><br><span class="line">├── interfaces/</span><br><span class="line">├── application/</span><br><span class="line">│   └── PlaceOrderAppService.java</span><br><span class="line">├── domain/</span><br><span class="line">│   ├── model/</span><br><span class="line">│   │   ├── aggregate/</span><br><span class="line">│   │   │   ├── Order.java            # 订单聚合根</span><br><span class="line">│   │   │   └── OrderItem.java        # 聚合内实体</span><br><span class="line">│   │   └── valueobject/</span><br><span class="line">│   │       ├── Money.java</span><br><span class="line">│   │       └── Address.java</span><br><span class="line">│   ├── event/OrderCreated.java</span><br><span class="line">│   └── repository/OrderRepository.java   # 仅接口</span><br><span class="line">└── infrastructure/</span><br><span class="line">    └── persistence/OrderRepositoryImpl.java</span><br></pre></td></tr></table></figure>
+
+<p>值对象用不可变类实现，按属性值判等：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 值对象：不可变，按属性值判等</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Money</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> cents;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String currency;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">Money</span><span class="params">(<span class="type">long</span> cents, String currency)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (cents &lt; <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalArgumentException</span>(<span class="string">&quot;金额不能为负&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="built_in">this</span>.cents = cents;</span><br><span class="line">        <span class="built_in">this</span>.currency = Objects.requireNonNull(currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Money <span class="title function_">plus</span><span class="params">(Money other)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (!<span class="built_in">this</span>.currency.equals(other.currency)) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalArgumentException</span>(<span class="string">&quot;币种不一致&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Money</span>(<span class="built_in">this</span>.cents + other.cents, <span class="built_in">this</span>.currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">getCents</span><span class="params">()</span> &#123; <span class="keyword">return</span> cents; &#125;</span><br><span class="line">    <span class="keyword">public</span> String <span class="title function_">getCurrency</span><span class="params">()</span> &#123; <span class="keyword">return</span> currency; &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">boolean</span> <span class="title function_">equals</span><span class="params">(Object o)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (<span class="built_in">this</span> == o) &#123; <span class="keyword">return</span> <span class="literal">true</span>; &#125;</span><br><span class="line">        <span class="keyword">if</span> (!(o <span class="keyword">instanceof</span> Money)) &#123; <span class="keyword">return</span> <span class="literal">false</span>; &#125;</span><br><span class="line">        <span class="type">Money</span> <span class="variable">m</span> <span class="operator">=</span> (Money) o;</span><br><span class="line">        <span class="type">return</span> <span class="variable">cents</span> <span class="operator">=</span>= m.cents &amp;&amp; currency.equals(m.currency);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">int</span> <span class="title function_">hashCode</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> Objects.hash(cents, currency);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>聚合根把守不变条件，跨聚合只持标识：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 订单聚合根：把守不变条件，跨聚合仅持有标识</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> OrderId id;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String skuId;          <span class="comment">// 引用库存聚合，不持有对象</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> List&lt;OrderItem&gt; items;</span><br><span class="line">    <span class="keyword">private</span> Address address;</span><br><span class="line">    <span class="keyword">private</span> OrderStatus status;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">Order</span><span class="params">(OrderId id, String skuId, Address address)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.id = Objects.requireNonNull(id);</span><br><span class="line">        <span class="built_in">this</span>.skuId = Objects.requireNonNull(skuId);</span><br><span class="line">        <span class="built_in">this</span>.address = Objects.requireNonNull(address);</span><br><span class="line">        <span class="built_in">this</span>.items = <span class="keyword">new</span> <span class="title class_">ArrayList</span>&lt;OrderItem&gt;();</span><br><span class="line">        <span class="built_in">this</span>.status = OrderStatus.CREATED;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">addItem</span><span class="params">(String skuId, Money unitPrice, <span class="type">int</span> quantity)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (status != OrderStatus.CREATED) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalStateException</span>(<span class="string">&quot;非新建订单不可加项&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (quantity &lt;= <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalArgumentException</span>(<span class="string">&quot;数量必须为正&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="built_in">this</span>.items.add(<span class="keyword">new</span> <span class="title class_">OrderItem</span>(skuId, unitPrice, quantity));</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Money <span class="title function_">totalAmount</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (items.isEmpty()) &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Money</span>(<span class="number">0L</span>, <span class="string">&quot;CNY&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">Money</span> <span class="variable">total</span> <span class="operator">=</span> items.get(<span class="number">0</span>).subtotal();</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">1</span>; i &lt; items.size(); i++) &#123;</span><br><span class="line">            total = total.plus(items.get(i).subtotal());</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> total;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="comment">// 资源库接口放在领域层，以聚合根为单位整体读写</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">OrderRepository</span> &#123;</span><br><span class="line">    Order <span class="title function_">findById</span><span class="params">(OrderId id)</span>;</span><br><span class="line">    <span class="keyword">void</span> <span class="title function_">save</span><span class="params">(Order order)</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>Order</code> 不 import 任何持久化注解；<code>OrderRepository</code> 是接口，实现在基础设施层；<code>skuId</code> 是标识而非 <code>Inventory</code> 对象。三点分别对应原则一、三与「一个聚合一个资源库」。应用服务才负责按 <code>skuId</code> 调用库存资源库、在事务提交后发布 <code>OrderCreated</code>——聚合内不直接发消息，这是保持领域层可测试的关键。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>把聚合当关系图画。</strong> 用外键或对象引用把「看起来有关」的实体全连起来，边界靠直觉而非不变条件，几轮迭代后退回大聚合。</li>
+<li><strong>一个事务改多个聚合。</strong> 图省事用 <code>@Transactional</code> 包住整条链路，锁竞争与耦合一起回来，还把超卖责任稀释到多处。</li>
+<li><strong>聚合根贫血。</strong> 聚合根只剩 getter&#x2F;setter，不变条件散落在应用服务，<code>totalAmount</code> 这类断言无人把守，模型与实现重新分成两套语言。</li>
+<li><strong>聚合间对象引用。</strong> 订单直接持有 <code>Payment</code> 并级联保存，边界在代码里消失，将来无法按聚合拆服务。</li>
+<li><strong>把聚合当成微服务的固定粒度。</strong> 一个聚合一个服务，服务数暴涨；聚合是逻辑边界，是否升格为物理边界取决于演进需要，不是建模时一次定死。</li>
+</ol>
+<p>以下情形建议不严格追求小聚合与全面最终一致：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>账务、清算类强一致记账，借贷必须同时入账</td>
+<td>用单库本地事务守住同一聚合，不引入事件异步</td>
+</tr>
+<tr>
+<td>低频、单团队维护的内部系统</td>
+<td>适度放宽粒度，别为小概率并发付出建模成本</td>
+</tr>
+<tr>
+<td>团队尚无补偿与对账能力</td>
+<td>先保留同步校验，不急于全面最终一致</td>
+</tr>
+<tr>
+<td>一次操作本质是同一事实的多个视图（订单与订单快照）</td>
+<td>同事务写入，不拆成事件</td>
+</tr>
+<tr>
+<td>外部渠道承诺「下单即锁库存」</td>
+<td>对渠道侧同步，内部异步，但须先定义中间态契约</td>
+</tr>
+</tbody></table>
+<p>判断标准可以压成一句：<strong>最终一致性是用可用性与可演进性换来的，代价是必须显式处理中间态与补偿；没有补偿能力，就不要先拆边界。</strong></p>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>项</th>
+<th>判定或做法</th>
+<th>落地位置</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>聚合</td>
+<td>一组必须同事务成立的不变条件</td>
+<td>领域层，一个聚合一个资源库</td>
+</tr>
+<tr>
+<td>聚合根</td>
+<td>唯一对外实体，全局 ID，把守不变条件</td>
+<td>聚合内唯一入口</td>
+</tr>
+<tr>
+<td>聚合间引用</td>
+<td>只持对方聚合根 ID，不做对象引用</td>
+<td>字段为 <code>skuId</code> &#x2F; <code>paymentId</code></td>
+</tr>
+<tr>
+<td>事务边界</td>
+<td>一次事务最多改一个聚合</td>
+<td><code>@Transactional</code> 落在单个应用服务方法</td>
+</tr>
+<tr>
+<td>跨聚合协作</td>
+<td>领域事件 + 最终一致</td>
+<td>应用层提交后发布，订阅方独立事务</td>
+</tr>
+<tr>
+<td>真正不变条件</td>
+<td>必须同瞬间成立</td>
+<td>划入同一聚合</td>
+</tr>
+<tr>
+<td>流程状态</td>
+<td>可跨事务最终一致</td>
+<td>拆成不同聚合</td>
+</tr>
+</tbody></table>
+<p>一条主线：<strong>不变条件定边界，标识引用代替对象引用，事件承接边界之外的协作。</strong></p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>事务边界不是由 <code>@Transactional</code> 标在哪决定的，而是由不变条件决定的。大聚合的病根，是把流程状态误当成必须同瞬间成立的业务断言；把它拆回四个各守其职的聚合，锁竞争与耦合一起消失，代价是要为「订单已建、库存未锁」这类中间态写好补偿。聚合设计到最后，回答的是一个很朴素的问题：这两件事，必须同时成功吗。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>欧创新《DDD 实战课》</li>
+<li>Eric Evans, <em>Domain-Driven Design: Tackling Complexity in the Heart of Software</em>, 2004</li>
+<li>Vaughn Vernon, <em>Implementing Domain-Driven Design</em>, 2013</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/03/16/DDD%EF%BC%88%E4%BA%94%EF%BC%89%E8%81%9A%E5%90%88%E4%B8%8E%E8%81%9A%E5%90%88%E6%A0%B9%E2%80%94%E2%80%94%E4%B8%80%E8%87%B4%E6%80%A7%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8E%9F%E5%88%99/" title="DDD（五）聚合与聚合根——一致性边界与设计原则">https://xssdpgy.github.io/2023/03/16/DDD（五）聚合与聚合根——一致性边界与设计原则/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/DDD/" rel="tag"># DDD</a>
+              <a href="/tags/%E5%BE%AE%E6%9C%8D%E5%8A%A1/" rel="tag"># 微服务</a>
+              <a href="/tags/%E8%81%9A%E5%90%88/" rel="tag"># 聚合</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/" rel="prev" title="DDD（四）实体与值对象——领域模型的基础单元">
+      <i class="fa fa-chevron-left"></i> DDD（四）实体与值对象——领域模型的基础单元
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/03/21/DDD%EF%BC%88%E5%85%AD%EF%BC%89%E9%A2%86%E5%9F%9F%E4%BA%8B%E4%BB%B6%E2%80%94%E2%80%94%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%A7%A3%E8%80%A6%E4%B8%8E%E6%9C%80%E7%BB%88%E4%B8%80%E8%87%B4%E6%80%A7/" rel="next" title="DDD（六）领域事件——微服务解耦与最终一致性">
+      DDD（六）领域事件——微服务解耦与最终一致性 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'c4f520fd1d65f7bd78d4fda3947dcbbf',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言服务化拆不拆，看团队规模和变更频率，不看 QPS 高低。先看一个常见情况：一个电商后台六个人维护一个工程，改一行逻辑十分钟上线；扩到四十人、分成订单、库存、支付几组还往同一个库提交，一次库存改动要全组回归，上线拖到半天。这才是拆的信号，与 QPS 无关。流量到两万 QPS 却只有一个小组、代码一周动一次，加机器更划算。拆开之后，网络、序列化、超时、寻址四笔成本到账。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（八）服务化拆分与 RPC 调用链">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言服务化拆不拆，看团队规模和变更频率，不看 QPS 高低。先看一个常见情况：一个电商后台六个人维护一个工程，改一行逻辑十分钟上线；扩到四十人、分成订单、库存、支付几组还往同一个库提交，一次库存改动要全组回归，上线拖到半天。这才是拆的信号，与 QPS 无关。流量到两万 QPS 却只有一个小组、代码一周动一次，加机器更划算。拆开之后，网络、序列化、超时、寻址四笔成本到账。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-06-22T12:48:00.000Z">
+<meta property="article:modified_time" content="2023-06-22T12:48:00.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="服务治理">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（八）服务化拆分与 RPC 调用链 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（八）服务化拆分与 RPC 调用链
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-22 20:48:00" itemprop="dateCreated datePublished" datetime="2023-06-22T20:48:00+08:00">2023-06-22</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>7.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>服务化拆不拆，看团队规模和变更频率，不看 QPS 高低。先看一个常见情况：一个电商后台六个人维护一个工程，改一行逻辑十分钟上线；扩到四十人、分成订单、库存、支付几组还往同一个库提交，一次库存改动要全组回归，上线拖到半天。这才是拆的信号，与 QPS 无关。流量到两万 QPS 却只有一个小组、代码一周动一次，加机器更划算。拆开之后，网络、序列化、超时、寻址四笔成本到账。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>一体化架构把所有模块打进一个工程，部署成一个进程。订单、库存、支付之间的方法调用发生在进程内，没有网络往返，不用知道对方在哪台机器，一行代码调完就能拿到返回值。数据库连接数由这个进程的连接池统一管住，构建一次、发布一次，排查问题也只看一个进程。</p>
+<p>服务化是把这些模块拆成独立进程，各自连自己的库，调用从进程内方法变成跨网络请求。带来的收益是三块：数据库连接数按服务收敛，不再所有应用直连同一个库；每个服务代码量小，构建和发布变快；一个服务故障可以被隔离，不至于拖垮全部功能。代价也是三块，而且立刻生效：响应时间不再由本地计算决定，而是各段远程调用之和；每次调用多了序列化与网络开销；调用方得先知道服务部署在哪、实例是死是活。</p>
+<p>RPC 框架封装的是网络调用的细节，让调用方像调本地方法一样调远程。一次调用要走五步：调用方把类名、方法名、参数序列化成二进制，经网络发出；服务端反序列化后反射调用目标方法；返回值再序列化回传；调用方反序列化得到结果。两次序列化、两次反序列化、一次网络往返，是每跳固定要付的成本。原本一次商品详情在单体里是三次数据库读，拆成商品、评论、店铺三个服务后变成三次远程调用加三次各自的数据库读，网络请求翻倍，延迟跟着涨。</p>
+<p>网络这层能调的是 I&#x2F;O 模型、小包立即发出的开关和序列化格式。不开这个开关，小包为凑满分段等上一次确认，叠加接收端延迟确认，常白等 40ms。这些优化只能把单跳从几毫秒压到一两毫秒，压不掉「多了一跳」本身。</p>
+<p>超时是调用链上最容易被忽略的成本。上游超时必须大于下游，且要扣掉上游已经花掉的时间。下游超时配得和上游一样大，串行几段之后总耗时就超过上游预算，上游已经给用户返回超时，下游却还在扣库存、写订单，重试一次再把扣减放大一遍。注册中心管的是另一件事：存服务地址、把地址变更推给调用方、判断实例是否存活。它不保证业务数据的一致性，把扣减正确性也寄希望于它，是拆完之后最容易出的设计错。</p>
+<pre class="mermaid">
+flowchart LR
+    C[&quot;调用方：类名 &#x2F; 方法 &#x2F; 参数&quot;] --&gt; S1[&quot;序列化为二进制&quot;]
+    S1 --&gt; NET[&quot;网络往返：含小包等待&quot;]
+    NET --&gt; S2[&quot;服务端反序列化&quot;]
+    S2 --&gt; INV[&quot;反射调用目标方法&quot;]
+    INV --&gt; S3[&quot;结果序列化回传&quot;]
+    S3 --&gt; C2[&quot;调用方反序列化取结果&quot;]
+</pre>
+
+<p>单跳两到五毫秒的固定成本乘上段数、再叠加各段尾部延迟，200ms 的余量比直觉里少得多。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把大促秒杀这套数字摆出来：单 SKU、库存 5000 件、预约 30 万人、整点开抢，日常下单 200 QPS、P99 60ms，峰值按 2 万 QPS（约 100 倍）估，验收目标是 2 万 QPS 下 P99 低于 200ms、P999 低于 1s、错误率低于 0.1%。链路是下单 → 锁库存 → 支付 → 发货。分层结论照用：网关 6 台、应用 20 台、缓存 3 分片、数据库同步写入不成立。每层的容量账不再重算，只看拆成服务之后的变化：200ms 的预算分配、各跳超时上限、20 台应用的下游寻址。</p>
+<p>按链路切四段是自然的：订单服务管下单编排，库存服务管锁库存与扣减，支付服务管支付预创建，履约服务管发货。但「自然」不等于「都进同步链」。发货丢进消息队列异步执行，不占 200ms；支付依赖外部通道、波动大，超时要单独放宽。真正压在同步 P99 上的只有两段：订单服务本地处理，加一次锁库存的远程调用。同步 RPC 段数越多，各段 P99 的尾部越容易叠到一起顶穿 200ms，错误率 0.1% 的口径也不允许靠超时重试去补。能异步的一律异步，这是拆完保住延迟目标的第一条。</p>
+<p>各段预算如下。支付与库存并行、发货不入同步链，是因为串行四段的尾部延迟会直接相加，并行两段只取较慢的一段。</p>
+<table>
+<thead>
+<tr>
+<th>链路段</th>
+<th>是否同步</th>
+<th>耗时预算</th>
+<th>依据与代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>网关鉴权 &#x2F; 限流</td>
+<td>同步</td>
+<td>10ms</td>
+<td>只做 O(1) 横切，不含业务读</td>
+</tr>
+<tr>
+<td>订单服务本地编排</td>
+<td>同步</td>
+<td>15ms</td>
+<td>参数校验、幂等键生成</td>
+</tr>
+<tr>
+<td>锁库存 RPC</td>
+<td>同步</td>
+<td>40ms</td>
+<td>含两次序列化、网络、缓存扣减</td>
+</tr>
+<tr>
+<td>支付预创建 RPC</td>
+<td>同步并行</td>
+<td>60ms</td>
+<td>依赖外部通道，超时单独放宽，可降级</td>
+</tr>
+<tr>
+<td>发货</td>
+<td>异步</td>
+<td>不占预算</td>
+<td>消息队列消费，不进 P99</td>
+</tr>
+<tr>
+<td>长尾与余量</td>
+<td>—</td>
+<td>约 75ms</td>
+<td>覆盖 P99 抖动与网络排队</td>
+</tr>
+</tbody></table>
+<p>超时配置是预算的兜底。入口对齐 P999 低于 1s，连接 50ms、读 800ms，留 200ms 给排队和序列化；订单调库存 200ms，调支付 400ms，每跳下游超时都小于上游剩余预算。订单留 800ms，两段串行最多 600ms，还剩 200ms 处理返回；两跳都配 800ms，串行可能到 1.6s，上游早超时了，库存服务还在扣那 5000 件，重试一次就成了两次扣减。扣减的幂等靠库存服务的订单号唯一约束兜住，不靠调用方不重试。</p>
+<table>
+<thead>
+<tr>
+<th>调用</th>
+<th>连接超时</th>
+<th>读超时</th>
+<th>与上游关系</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>网关 → 订单服务</td>
+<td>50ms</td>
+<td>800ms</td>
+<td>入口总预算</td>
+</tr>
+<tr>
+<td>订单 → 库存服务</td>
+<td>30ms</td>
+<td>200ms</td>
+<td>小于订单剩余预算</td>
+</tr>
+<tr>
+<td>订单 → 支付服务</td>
+<td>50ms</td>
+<td>400ms</td>
+<td>并行发起，单独放宽</td>
+</tr>
+<tr>
+<td>注册中心心跳</td>
+<td>—</td>
+<td>30s 续约 &#x2F; 90s 摘除</td>
+<td>与业务超时无关</td>
+</tr>
+</tbody></table>
+<p>20 台应用的实例发现落在注册中心上。下单应用启动时订阅库存、支付服务的地址列表缓存在本地；库存服务扩容，注册中心推送变更，20 台调用方各自更新，不用改配置、不用重启。发布走优雅关闭：先注销，等存量请求处理完再停进程。机器掉电来不及注销，靠心跳兜底——30 秒续约、90 秒没续上就摘除。摘除要有保护：一次超过四成实例就停手并告警，否则一次网络抖动可能把整组地址清空，20 台调用方同时拿不到下游，比个别故障严重得多。注册中心只回答「地址在哪、实例活没活」，库存扣得对不对、订单落没落库，它一概不管。</p>
+<pre class="mermaid">
+flowchart TB
+    GW[&quot;网关 6 台：10ms 横切&quot;] --&gt; O[&quot;订单服务：15ms 本地编排&quot;]
+    O --&gt;|&quot;读超时 200ms&quot;| I[&quot;库存服务：锁减 40ms&quot;]
+    O --&gt;|&quot;读超时 400ms 并行&quot;| P[&quot;支付服务：60ms 可降级&quot;]
+    P -.-&gt; T[&quot;第三方支付通道&quot;]
+    O -.-&gt; M[&quot;消息队列：发货异步 不占预算&quot;]
+    RC[&quot;注册中心：地址 + 心跳状态&quot;] -.-&gt; O
+    RC -.-&gt; I
+    RC -.-&gt; P
+    I -.-&gt; C[&quot;缓存 3 分片：库存扣减&quot;]
+</pre>
+
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>目录按服务分，公共 RPC 基础设施单独抽一层，别让每个服务各写一套超时逻辑：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">seckill-services/</span><br><span class="line">├── order-service/</span><br><span class="line">│   └── src/main/java/com/example/seckill/order/</span><br><span class="line">│       ├── OrderApi.java             # 下单入口，编排同步链路</span><br><span class="line">│       └── OrderApplication.java</span><br><span class="line">├── inventory-service/</span><br><span class="line">│   └── src/main/java/com/example/seckill/inventory/</span><br><span class="line">│       ├── InventoryApi.java        # 锁库存，只暴露扣减与幂等接口</span><br><span class="line">│       └── InventoryRepository.java</span><br><span class="line">├── payment-service/</span><br><span class="line">│   └── src/main/java/com/example/seckill/payment/</span><br><span class="line">│       └── PaymentApi.java          # 支付预创建，超时单独放宽</span><br><span class="line">├── fulfillment-service/</span><br><span class="line">│   └── src/main/java/com/example/seckill/fulfillment/</span><br><span class="line">│       └── ShipmentConsumer.java    # 订阅发货消息，异步执行</span><br><span class="line">└── common-rpc/</span><br><span class="line">    └── src/main/java/com/example/seckill/infrastructure/rpc/</span><br><span class="line">        ├── RpcTimeoutBudget.java    # 调用链剩余预算</span><br><span class="line">        └── RpcBudgetFilter.java     # 入口建预算，沿链路透传</span><br></pre></td></tr></table></figure>
+
+<p>预算类把「下游超时不得超过上游剩余」写成硬约束：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.rpc;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.Collections;</span><br><span class="line"><span class="keyword">import</span> java.util.LinkedHashMap;</span><br><span class="line"><span class="keyword">import</span> java.util.Map;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 一次下单调用链的超时预算：下游读超时不得大于上游此刻的剩余预算。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">RpcTimeoutBudget</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> deadlineAtNanos;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> totalMs;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> Map&lt;String, Long&gt; hops = <span class="keyword">new</span> <span class="title class_">LinkedHashMap</span>&lt;String, Long&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">RpcTimeoutBudget</span><span class="params">(<span class="type">long</span> totalMs)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (totalMs &lt;= <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalArgumentException</span>(<span class="string">&quot;totalMs must be positive&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="built_in">this</span>.totalMs = totalMs;</span><br><span class="line">        <span class="built_in">this</span>.deadlineAtNanos = System.nanoTime() + totalMs * <span class="number">1000000L</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 登记一跳，返回实际可用的读超时（被剩余预算裁剪后）。 */</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">allocate</span><span class="params">(String hop, <span class="type">long</span> wantMs)</span> &#123;</span><br><span class="line">        <span class="type">long</span> <span class="variable">remain</span> <span class="operator">=</span> remainingMs();</span><br><span class="line">        <span class="keyword">if</span> (remain &lt;= <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalStateException</span>(<span class="string">&quot;budget exhausted before hop: &quot;</span> + hop);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">long</span> <span class="variable">granted</span> <span class="operator">=</span> Math.min(wantMs, remain);</span><br><span class="line">        hops.put(hop, Long.valueOf(granted));</span><br><span class="line">        <span class="keyword">return</span> granted;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">remainingMs</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="type">long</span> <span class="variable">left</span> <span class="operator">=</span> deadlineAtNanos - System.nanoTime();</span><br><span class="line">        <span class="keyword">return</span> left &lt;= <span class="number">0</span> ? <span class="number">0L</span> : left / <span class="number">1000000L</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Map&lt;String, Long&gt; <span class="title function_">hops</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> Collections.unmodifiableMap(hops);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">totalMs</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> totalMs;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>入口过滤器建预算并把剩余毫秒写进请求头透传；下游取上游剩余与本地上限的较小值，递减自然成立。ThreadLocal 必须在 finally 清掉，线程池复用不清会串号：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.rpc;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> org.springframework.stereotype.Component;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> javax.servlet.Filter;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.FilterChain;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.FilterConfig;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletException;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletRequest;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletResponse;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.http.HttpServletRequest;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.http.HttpServletResponse;</span><br><span class="line"><span class="keyword">import</span> java.io.IOException;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 入口建立调用链预算，服务间调用按上游剩余时间递减。 */</span></span><br><span class="line"><span class="meta">@Component</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">RpcBudgetFilter</span> <span class="keyword">implements</span> <span class="title class_">Filter</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">HEADER_REMAIN</span> <span class="operator">=</span> <span class="string">&quot;X-RPC-Remain-Ms&quot;</span>;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">long</span> <span class="variable">ENTRY_BUDGET_MS</span> <span class="operator">=</span> <span class="number">800L</span>;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> ThreadLocal&lt;RpcTimeoutBudget&gt; CURRENT =</span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">ThreadLocal</span>&lt;RpcTimeoutBudget&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> RpcTimeoutBudget <span class="title function_">current</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> CURRENT.get();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">init</span><span class="params">(FilterConfig config)</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">destroy</span><span class="params">()</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">doFilter</span><span class="params">(ServletRequest req, ServletResponse resp, FilterChain chain)</span></span><br><span class="line">            <span class="keyword">throws</span> IOException, ServletException &#123;</span><br><span class="line">        <span class="type">HttpServletRequest</span> <span class="variable">httpReq</span> <span class="operator">=</span> (HttpServletRequest) req;</span><br><span class="line">        <span class="type">HttpServletResponse</span> <span class="variable">httpResp</span> <span class="operator">=</span> (HttpServletResponse) resp;</span><br><span class="line">        <span class="type">long</span> <span class="variable">upstream</span> <span class="operator">=</span> parseRemain(httpReq.getHeader(HEADER_REMAIN));</span><br><span class="line">        <span class="type">RpcTimeoutBudget</span> <span class="variable">budget</span> <span class="operator">=</span></span><br><span class="line">                <span class="keyword">new</span> <span class="title class_">RpcTimeoutBudget</span>(Math.min(ENTRY_BUDGET_MS, upstream));</span><br><span class="line">        CURRENT.set(budget);</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            chain.doFilter(req, resp);</span><br><span class="line">        &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">            httpResp.setHeader(HEADER_REMAIN, String.valueOf(budget.remainingMs()));</span><br><span class="line">            CURRENT.remove();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="type">long</span> <span class="title function_">parseRemain</span><span class="params">(String raw)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (raw == <span class="literal">null</span> || raw.length() == <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span> ENTRY_BUDGET_MS;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="type">long</span> <span class="variable">v</span> <span class="operator">=</span> Long.parseLong(raw);</span><br><span class="line">            <span class="keyword">return</span> v &gt; <span class="number">0</span> ? v : ENTRY_BUDGET_MS;</span><br><span class="line">        &#125; <span class="keyword">catch</span> (NumberFormatException e) &#123;</span><br><span class="line">            <span class="keyword">return</span> ENTRY_BUDGET_MS;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这套写法只管同进程内各跳的时间分配，跨进程依赖请求头透传，任何一跳没传，递减就断；它也不替代幂等，超时重试照样重复扣减，得靠库存服务的唯一约束兜底。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>拿 QPS 当拆分线。</strong> 2 万 QPS、一个小组维护的单体，加机器就能扛；拆完凭空多出四段远程调用、四份序列化开销和一套注册中心。触发条件该看协作冲突频率、连接数和构建时长。</li>
+<li><strong>拆得越细越好。</strong> 每多一跳就多两次序列化、一次网络往返、一个故障点。同步链挂四五个服务，200ms 的 P99 会被各段尾部耗光。先按业务边界粗拆，再逐步细化。</li>
+<li><strong>全链路超时配成同一个值。</strong> 上游 800ms、下游也 800ms，串行叠加到 1.6s，上游已超时、下游还在扣库存，重试再放大一遍。下游必须小于上游剩余预算，代码里裁成硬约束。</li>
+<li><strong>让注册中心保证数据一致性。</strong> 它只管地址和实例存活。扣减正确性靠数据库约束与幂等键，把摘除抖动当成一致性问题去修，方向就错了。</li>
+<li><strong>实例故障靠改配置重启。</strong> 20 台调用方逐个改地址再重启，恢复以小时计；地址变更交给注册中心推送，宕机剔除交给心跳，摘除再加一道比例保护。</li>
+</ol>
+<p>下面这些情况，这套拆分与调用链预算可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>团队不到十人、单一工程、改动很少</td>
+<td>协作成本还没成为瓶颈</td>
+<td>保持单体，按模块分包</td>
+</tr>
+<tr>
+<td>峰值高但逻辑简单、无状态</td>
+<td>加实例就能横向扩展</td>
+<td>水平扩容加负载均衡</td>
+</tr>
+<tr>
+<td>内部后台、报表系统，P99 目标宽松</td>
+<td>没有 200ms 硬约束</td>
+<td>同步调用足够，不设预算表</td>
+</tr>
+<tr>
+<td>强事务资金操作，一致性优先</td>
+<td>跨服务事务代价高于收益</td>
+<td>保持单库单事务</td>
+</tr>
+<tr>
+<td>写入瓶颈集中在单点存储</td>
+<td>拆分解决不了写能力</td>
+<td>先改存储层的写入路径</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>判断 &#x2F; 参数</th>
+<th>结论</th>
+<th>依据或代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>拆分触发条件</td>
+<td>团队规模、变更频率、连接数、构建时长</td>
+<td>与 QPS 无直接关系</td>
+</tr>
+<tr>
+<td>单跳固定成本</td>
+<td>两次序列化、两次反序列化、一次网络往返</td>
+<td>每跳约 2–5ms，按段数叠加</td>
+</tr>
+<tr>
+<td>下单同步链</td>
+<td>只留下单编排与锁库存</td>
+<td>支付并行放宽、发货异步</td>
+</tr>
+<tr>
+<td>入口总预算</td>
+<td>连接 50ms &#x2F; 读 800ms</td>
+<td>对齐 P999 低于 1s，留 200ms</td>
+</tr>
+<tr>
+<td>下游超时</td>
+<td>小于上游剩余预算</td>
+<td>防止上游超时后下游继续写</td>
+</tr>
+<tr>
+<td>注册中心职责</td>
+<td>寻址与实例状态</td>
+<td>不保证数据一致性</td>
+</tr>
+<tr>
+<td>摘除保护</td>
+<td>单次不超过四成实例</td>
+<td>防网络抖动清空整组</td>
+</tr>
+</tbody></table>
+<p>目标写法的模板也只有一句：<strong>在 2 万 QPS 下，把 200ms 拆到各段，每段超时小于上游剩余</strong>。填不出各段预算，说明拆分方案还没到能评审的程度。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>拆分的收益落在协作效率、连接数和故障隔离上，代价落在网络、序列化、超时和寻址上，两笔账要一起算。QPS 高不是拆的理由，团队改不动了才是。拆完能不能守住 200ms 的 P99，看的不是 RPC 框架多快，是同步链上留了几段、超时有没有沿链递减、注册中心有没有被误用成一致性组件。把这三件事定死，20 台应用的扩容与摘除才是日常运维动作，不是一次事故。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Sam Newman, <em>Building Microservices</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/" title="高并发（八）服务化拆分与 RPC 调用链">https://xssdpgy.github.io/2023/06/22/高并发（八）服务化拆分与 RPC 调用链/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86/" rel="tag"># 服务治理</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/" rel="prev" title="高并发（七）消息队列削峰与投递语义">
+      <i class="fa fa-chevron-left"></i> 高并发（七）消息队列削峰与投递语义
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/" rel="next" title="高并发（九）服务治理与流量入口设计">
+      高并发（九）服务治理与流量入口设计 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'd2a2fa3cdac0e2c529c94f3a4f73a3ac',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -222,8 +222,8 @@
       </div>
 
       <div class="post-title">
-          <a class="post-title-link" href="/2023/03/11/%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%EF%BC%9A%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/" itemprop="url">
-            <span itemprop="name">实体与值对象：领域模型的基础单元</span>
+          <a class="post-title-link" href="/2023/03/11/DDD%EF%BC%88%E5%9B%9B%EF%BC%89%E5%AE%9E%E4%BD%93%E4%B8%8E%E5%80%BC%E5%AF%B9%E8%B1%A1%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%9F%BA%E7%A1%80%E5%8D%95%E5%85%83/" itemprop="url">
+            <span itemprop="name">DDD（四）实体与值对象——领域模型的基础单元</span>
           </a>
       </div>
 
@@ -242,8 +242,8 @@
       </div>
 
       <div class="post-title">
-          <a class="post-title-link" href="/2023/03/09/%E9%80%9A%E7%94%A8%E8%AF%AD%E8%A8%80%E4%B8%8E%E9%99%90%E7%95%8C%E4%B8%8A%E4%B8%8B%E6%96%87/" itemprop="url">
-            <span itemprop="name">通用语言与限界上下文</span>
+          <a class="post-title-link" href="/2023/03/09/DDD%EF%BC%88%E4%B8%89%EF%BC%89%E9%80%9A%E7%94%A8%E8%AF%AD%E8%A8%80%E4%B8%8E%E9%99%90%E7%95%8C%E4%B8%8A%E4%B8%8B%E6%96%87/" itemprop="url">
+            <span itemprop="name">DDD（三）通用语言与限界上下文</span>
           </a>
       </div>
 
@@ -262,8 +262,8 @@
       </div>
 
       <div class="post-title">
-          <a class="post-title-link" href="/2023/03/06/%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%EF%BC%9A%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/" itemprop="url">
-            <span itemprop="name">领域与子域：核心域、通用域与支撑域</span>
+          <a class="post-title-link" href="/2023/03/06/DDD%EF%BC%88%E4%BA%8C%EF%BC%89%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/" itemprop="url">
+            <span itemprop="name">DDD（二）领域与子域——核心域、通用域与支撑域</span>
           </a>
       </div>
 
@@ -343,20 +343,20 @@
       <div class="site-state-item site-state-posts">
           <a href="/archives/">
         
-          <span class="site-state-item-count">18</span>
+          <span class="site-state-item-count">30</span>
           <span class="site-state-item-name">日志</span>
         </a>
       </div>
       <div class="site-state-item site-state-categories">
             <a href="/categories/">
           
-        <span class="site-state-item-count">2</span>
+        <span class="site-state-item-count">3</span>
         <span class="site-state-item-name">分类</span></a>
       </div>
       <div class="site-state-item site-state-tags">
             <a href="/tags/">
           
-        <span class="site-state-item-count">24</span>
+        <span class="site-state-item-count">32</span>
         <span class="site-state-item-name">标签</span></a>
       </div>
   </nav>
@@ -426,7 +426,7 @@
 
   
   <script src="/lib/anime.min.js"></script>
-  <script src="//cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
   <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
   <script src="/lib/lozad/lozad.min.js"></script>
   <script src="/lib/velocity/velocity.min.js"></script>
@@ -467,12 +467,22 @@
 if (document.querySelectorAll('pre.mermaid').length) {
   NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
     mermaid.initialize({
-      theme    : 'forest',
-      logLevel : 3,
-      flowchart: { curve     : 'linear' },
-      gantt    : { axisFormat: '%m/%d/%Y' },
-      sequence : { actorMargin: 50 }
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
     });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
   }, window.mermaid);
 }
 </script>

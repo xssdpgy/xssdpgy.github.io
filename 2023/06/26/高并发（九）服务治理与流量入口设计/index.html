@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言流量入口这几层各有各的活。负载均衡负责分发，鉴权与限流归网关；慢请求靠 Trace 还原，多机房先定数据写在哪、往哪同步；把治理逻辑挪出业务进程，是 ServiceMesh 的事。一个组件不该全背。先看一个常见情况：秒杀整点 2 万 QPS 打到入口，有人把鉴权、库存预检、订单参数校验全塞进网关，网关一升级全站不可用，业务改个字段还得跟着发版。横切逻辑放网关、业务语义留应用，各层才扩得动。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（九）服务治理与流量入口设计">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言流量入口这几层各有各的活。负载均衡负责分发，鉴权与限流归网关；慢请求靠 Trace 还原，多机房先定数据写在哪、往哪同步；把治理逻辑挪出业务进程，是 ServiceMesh 的事。一个组件不该全背。先看一个常见情况：秒杀整点 2 万 QPS 打到入口，有人把鉴权、库存预检、订单参数校验全塞进网关，网关一升级全站不可用，业务改个字段还得跟着发版。横切逻辑放网关、业务语义留应用，各层才扩得动。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-06-26T02:43:43.000Z">
+<meta property="article:modified_time" content="2023-06-26T02:43:43.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="服务治理">
+<meta property="article:tag" content="可观测性">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（九）服务治理与流量入口设计 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（九）服务治理与流量入口设计
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-26 10:43:43" itemprop="dateCreated datePublished" datetime="2023-06-26T10:43:43+08:00">2023-06-26</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>流量入口这几层各有各的活。负载均衡负责分发，鉴权与限流归网关；慢请求靠 Trace 还原，多机房先定数据写在哪、往哪同步；把治理逻辑挪出业务进程，是 ServiceMesh 的事。一个组件不该全背。先看一个常见情况：秒杀整点 2 万 QPS 打到入口，有人把鉴权、库存预检、订单参数校验全塞进网关，网关一升级全站不可用，业务改个字段还得跟着发版。横切逻辑放网关、业务语义留应用，各层才扩得动。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>服务化拆开之后，一次请求要经过好几层才能落到业务代码，每层解决的是不同的问题。把它们分开，比挑一个「最强」的组件更要紧。</p>
+<p>负载均衡管分发：按策略把请求分到多个实例，屏蔽实例地址，扩容加机器就行。代理类独立部署承接全量入口流量，四层转发性能高、响应包不回经它，但看不懂 URL、也不探活；七层能按 URL 细分、能感知后端故障，性能低一档。客户端类内嵌在调用方进程，从注册中心取列表、本地选节点，服务间 RPC 走这一条。入口用代理类、服务间用客户端类，反过来配会让注册中心形同虚设。</p>
+<p>API 网关是系统的门面，架在负载均衡和应用之间，处理所有服务共有的横切动作：协议转换、认证授权、限流、黑白名单、生成 requestId、记访问日志。用责任链把过滤器串起来，增删一个逻辑都不影响别的；线程池按目标服务隔离，否则一个服务响应变慢占住线程，其余服务跟着不可用。网关自身耗时是硬约束：业务处理 10ms，网关多花 1ms 就是 10% 涨幅，所以里面只放 O(1) 的动作，不做接口聚合、不连业务库。</p>
+<p>业务语义是另一层：订单参数校验、库存预检、接口数据聚合跟着业务需求变，该留在应用或聚合服务层。用一条线划开——改动驱动方是安全、流量策略的进网关，是业务需求的进应用。判断依据不是「技术上能不能放」，是「谁会要求改它」。</p>
+<p>Trace 解决慢请求定位。一次下单跨好几台机器，日志散在各处，用 traceId 串起同一次请求的日志，用 spanId 记每次远程调用的层级，才能还原谁调了谁、各段花了多久。三个条件缺一不可：切面埋点不侵入业务、日志采样不压垮磁盘、集中存储免得逐台机器搜。它回答「单次请求慢在哪一段」，整体趋势和告警归监控，两者别互相替代。</p>
+<p>多机房的难点不在多部署几套服务，在跨地域延迟。同城专线 1–3ms 还能容忍跨机房写；异地 50ms 以内要收敛跨机房调用；跨国 100–200ms 只剩异步同步。ServiceMesh 把治理逻辑挪到同机部署的代理，数据平面转发、控制平面下发策略，图的是多语言团队不必把限流、熔断、追踪打点各实现一遍，代价是每跳多一次转发。</p>
+<pre class="mermaid">
+flowchart TB
+    U[&quot;用户 &#x2F; 30 万预约&quot;] --&gt; LB[&quot;负载均衡：分发 2 万 QPS&quot;]
+    LB --&gt; GW[&quot;网关 6 台：鉴权 · 限流 · 黑白名单 · requestId&quot;]
+    GW --&gt; APP[&quot;下单应用 20 台：参数校验 · 库存预检 · 编排&quot;]
+    APP --&gt; CLB[&quot;客户端负载：从注册中心取实例&quot;]
+    CLB --&gt; S1[&quot;订单服务&quot;]
+    CLB --&gt; S2[&quot;库存服务&quot;]
+    CLB --&gt; S3[&quot;支付服务&quot;]
+    GW -.-&gt;|横切层| X[&quot;安全 &#x2F; 流量策略：只此一层&quot;]
+    APP -.-&gt;|业务层| Y[&quot;业务语义：留在应用&quot;]
+    RC[&quot;注册中心：地址与实例状态&quot;] -.-&gt; CLB
+    TR[&quot;Trace：traceId &#x2F; spanId 还原链路&quot;] -.-&gt; GW
+    TR -.-&gt; APP
+    TR -.-&gt; S2
+    SM[&quot;ServiceMesh 代理：治理下沉&quot;] -.-&gt; S1
+    SM -.-&gt; S2
+</pre>
+
+<p>两条虚线标出边界：横切逻辑止于网关，业务语义始于应用，注册中心、Trace、代理各挂各的位置。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>还是大促秒杀这套数字：单 SKU、库存 5000 件、预约 30 万人、整点开抢，日常下单 200 QPS、P99 60ms，峰值 2 万 QPS（约 100 倍），验收目标是 2 万 QPS 下 P99 低于 200ms、P999 低于 1s、错误率低于 0.1%。链路下单 → 锁库存 → 支付 → 发货，分层结论照旧：网关 6 台、应用 20 台、缓存 3 分片、数据库同步写入不成立。每层的容量账不再重算。流量进来先撞上鉴权和限流，慢请求的排查靠 Trace，跨机房之后库存和订单的归属要重新定，治理逻辑要不要下沉也得一并决定。</p>
+<p>先说流量入口。30 万人抢 5000 件，超过 98% 的请求注定失败，能早挡掉的绝不能放到 20 台应用和缓存 3 分片后面。限流放在网关 6 台，按预约资格、设备、IP 维度直接拦；鉴权也放网关，不同客户端的认证方式统一收敛，应用不重复做。这两样改动由安全和流量策略驱动，跟「这个 SKU 还有没有货」没关系。库存预检、订单参数校验、资格与库存的最终判定属于业务语义，留在应用——网关一旦读业务库、判断库存，就成了业务网关，业务改个字段这 6 台得跟着发版。网关还要生成 requestId 注入请求头，这是 Trace 的起点。</p>
+<p>网关自身开销得掐住。6 台承接全量 2 万 QPS，业务处理 10ms 时多 1ms 就是 10%，里面只跑 O(1) 的过滤器：令牌桶取一次、黑名单查一次、认证校验一次，不做多次远程调用和接口聚合。线程池按目标服务隔离并设配额，支付通道抖动占满的是支付的线程，下单照样能走；不隔离，一个慢服务就能把 6 台网关的线程耗光，20 台应用再闲也没用。</p>
+<p>再看一次慢下单。晚高峰少量请求把 P99 从 60ms 抬到几百毫秒，监控只显示「下单接口变慢」，看不出是哪一步。网关生成 traceId，每段远程调用生成 spanId，切面在缓存、数据库、外部接口的客户端打点，采样后经消息队列集中存储。拿一个慢请求的 traceId 查下去，定位到的是库存服务里一次数据库查询从 5ms 涨到 178ms，不是「下单应用慢」。</p>
+<pre class="mermaid">
+flowchart LR
+    R[&quot;慢下单 traceId&#x3D;8f3c&quot;] --&gt; G[&quot;网关段 6ms&quot;]
+    G --&gt; A[&quot;下单应用段 12ms&quot;]
+    A --&gt; I[&quot;库存服务段 185ms&quot;]
+    I --&gt; C[&quot;缓存读 2ms&quot;]
+    I --&gt; D[&quot;数据库查询 178ms&quot;]
+    D -.-&gt;|瓶颈| F[&quot;索引缺失导致扫描放大&quot;]
+    A --&gt; P[&quot;支付预创建段 45ms&quot;]
+    A --&gt; M[&quot;发货消息异步 不入同步链&quot;]
+</pre>
+
+<p>Trace 的成本要算：1 万 QPS 下每次请求打十几条埋点日志，就是每秒十几万条写磁盘，排查工具先把系统拖慢。采样率先压到一成，再留一个线上开关随时关掉全量采集，这是上线前提。</p>
+<p>跨机房的判断更要前置：先解决数据归谁写、往哪个方向同步，再谈把服务铺到两个城市。同城双活专线 1–3ms，主库单点写、两地各放从库读还能接受；到了跨城 30–50ms，库存这种强一致、高频扣减的数据就不能同步双写。5000 件库存是全局单点，两地各扣各的，30ms 同步窗口里必然超卖，对账补不回已发出去的货。所以库存写固定在主机房一个方向，异地只读或异步同步；订单按用户分片，一个用户的读写落在同一机房，读跨机房从库多几十毫秒可以接受，写跨过去不行。发货消息可以走消息队列跨机房同步，扣减不在这条路上。</p>
+<p>ServiceMesh 是最后才需要考虑的一层。出现多语言服务、治理策略要复用时，把限流、熔断、追踪打点下沉到同机代理，省掉每种语言重写一遍；单语言栈、治理逻辑稳定时，代理每跳多一次转发，2 万 QPS 下这层开销得先压过再说。它不是流量入口的替代品。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>网关只放横切过滤器，业务代码在应用侧，目录按这条边界切：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">seckill-edge/</span><br><span class="line">├── src/main/java/com/example/seckill/gateway/</span><br><span class="line">│   ├── GatewayChainFilter.java       # 责任链入口，只跑横切过滤器</span><br><span class="line">│   ├── AuthFilter.java               # 认证，横切</span><br><span class="line">│   ├── RateLimitFilter.java          # 限流 / 黑白名单，横切</span><br><span class="line">│   └── TraceHeaderFilter.java        # 生成 requestId 注入请求头</span><br><span class="line">├── src/main/java/com/example/seckill/infrastructure/trace/</span><br><span class="line">│   └── TraceContext.java             # traceId / spanId 透传</span><br><span class="line">└── src/main/java/com/example/seckill/order/</span><br><span class="line">    ├── OrderController.java          # 业务语义：参数校验、库存预检</span><br><span class="line">    └── OrderAppService.java          # 接口聚合下沉到应用层</span><br></pre></td></tr></table></figure>
+
+<p>追踪上下文把 traceId 串全程、spanId 记层级，随远程调用透传。ThreadLocal 存的上下文，请求结束必须清掉，线程池复用不清会串号：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.trace;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.UUID;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 一次请求的追踪上下文：traceId 串全程，spanId 记每一跳，随 RPC 透传。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">TraceContext</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">HEADER_TRACE</span> <span class="operator">=</span> <span class="string">&quot;X-Trace-Id&quot;</span>;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">HEADER_SPAN</span> <span class="operator">=</span> <span class="string">&quot;X-Span-Id&quot;</span>;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> ThreadLocal&lt;TraceContext&gt; CURRENT =</span><br><span class="line">            <span class="keyword">new</span> <span class="title class_">ThreadLocal</span>&lt;TraceContext&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String traceId;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String spanId;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="title function_">TraceContext</span><span class="params">(String traceId, String spanId)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.traceId = traceId;</span><br><span class="line">        <span class="built_in">this</span>.spanId = spanId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> TraceContext <span class="title function_">start</span><span class="params">(String inheritedTrace, String inheritedSpan)</span> &#123;</span><br><span class="line">        <span class="type">String</span> <span class="variable">tid</span> <span class="operator">=</span> (inheritedTrace == <span class="literal">null</span> || inheritedTrace.length() == <span class="number">0</span>)</span><br><span class="line">                ? UUID.randomUUID().toString().replace(<span class="string">&quot;-&quot;</span>, <span class="string">&quot;&quot;</span>)</span><br><span class="line">                : inheritedTrace;</span><br><span class="line">        <span class="type">String</span> <span class="variable">sid</span> <span class="operator">=</span> (inheritedSpan == <span class="literal">null</span> || inheritedSpan.length() == <span class="number">0</span>)</span><br><span class="line">                ? <span class="string">&quot;1&quot;</span> : inheritedSpan + <span class="string">&quot;.1&quot;</span>;</span><br><span class="line">        <span class="type">TraceContext</span> <span class="variable">ctx</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">TraceContext</span>(tid, sid);</span><br><span class="line">        CURRENT.set(ctx);</span><br><span class="line">        <span class="keyword">return</span> ctx;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> TraceContext <span class="title function_">current</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> CURRENT.get();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">clear</span><span class="params">()</span> &#123;</span><br><span class="line">        CURRENT.remove();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> String <span class="title function_">traceId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> traceId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> String <span class="title function_">spanId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> spanId;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>网关责任链只执行横切过滤器，任一不通过就在此终止，业务校验一个都不挂进来：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.gateway;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> com.example.seckill.infrastructure.trace.TraceContext;</span><br><span class="line"><span class="keyword">import</span> org.slf4j.Logger;</span><br><span class="line"><span class="keyword">import</span> org.slf4j.LoggerFactory;</span><br><span class="line"><span class="keyword">import</span> org.springframework.stereotype.Component;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> javax.servlet.Filter;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.FilterChain;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.FilterConfig;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletException;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletRequest;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.ServletResponse;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.http.HttpServletRequest;</span><br><span class="line"><span class="keyword">import</span> javax.servlet.http.HttpServletResponse;</span><br><span class="line"><span class="keyword">import</span> java.io.IOException;</span><br><span class="line"><span class="keyword">import</span> java.util.List;</span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.CopyOnWriteArrayList;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 网关入口：只跑横切过滤器、生成 traceId；业务校验不在这里。 */</span></span><br><span class="line"><span class="meta">@Component</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">GatewayChainFilter</span> <span class="keyword">implements</span> <span class="title class_">Filter</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">Logger</span> <span class="variable">LOG</span> <span class="operator">=</span> LoggerFactory.getLogger(GatewayChainFilter.class);</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">CrossCutting</span> &#123;</span><br><span class="line">        <span class="type">boolean</span> <span class="title function_">pass</span><span class="params">(HttpServletRequest req, HttpServletResponse resp)</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> List&lt;CrossCutting&gt; filters = <span class="keyword">new</span> <span class="title class_">CopyOnWriteArrayList</span>&lt;CrossCutting&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">add</span><span class="params">(CrossCutting f)</span> &#123;</span><br><span class="line">        filters.add(f);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">init</span><span class="params">(FilterConfig config)</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">destroy</span><span class="params">()</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="meta">@Override</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">doFilter</span><span class="params">(ServletRequest req, ServletResponse resp, FilterChain downstream)</span></span><br><span class="line">            <span class="keyword">throws</span> IOException, ServletException &#123;</span><br><span class="line">        <span class="type">HttpServletRequest</span> <span class="variable">httpReq</span> <span class="operator">=</span> (HttpServletRequest) req;</span><br><span class="line">        <span class="type">HttpServletResponse</span> <span class="variable">httpResp</span> <span class="operator">=</span> (HttpServletResponse) resp;</span><br><span class="line">        <span class="type">TraceContext</span> <span class="variable">ctx</span> <span class="operator">=</span> TraceContext.start(</span><br><span class="line">                httpReq.getHeader(TraceContext.HEADER_TRACE),</span><br><span class="line">                httpReq.getHeader(TraceContext.HEADER_SPAN));</span><br><span class="line">        httpResp.setHeader(TraceContext.HEADER_TRACE, ctx.traceId());</span><br><span class="line">        httpResp.setHeader(TraceContext.HEADER_SPAN, ctx.spanId());</span><br><span class="line">        <span class="keyword">try</span> &#123;</span><br><span class="line">            <span class="keyword">for</span> (CrossCutting f : filters) &#123;</span><br><span class="line">                <span class="keyword">if</span> (!f.pass(httpReq, httpResp)) &#123;</span><br><span class="line">                    LOG.info(<span class="string">&quot;gateway reject trace=&#123;&#125;&quot;</span>, ctx.traceId());</span><br><span class="line">                    <span class="keyword">return</span>;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">            downstream.doFilter(req, resp);</span><br><span class="line">        &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">            TraceContext.clear();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>责任链只解决「横切逻辑可插拔」，不解决业务编排。限流计数、黑名单存储、认证校验各自挂在 CrossCutting 里，网关主体不认识业务对象，这是它能跟业务分开发版的前提。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>把业务语义塞进网关。</strong> 订单参数校验、库存预检、接口聚合放进网关，业务改一个字段，网关 6 台跟着发版，全站风险被绑住。边界按改动的驱动方划，不按「技术上放得下」划。</li>
+<li><strong>让一个组件背所有职责。</strong> 指望网关顺带做服务间负载均衡、追踪日志存储、多机房数据同步，哪一层都做不深，网关自己长成新的单体。</li>
+<li><strong>全量 Trace 不采样、不留开关。</strong> 1 万 QPS 下每秒十几万条埋点日志写磁盘，排查工具先把系统拖慢。采样率和线上关闭开关是上线前提。</li>
+<li><strong>跨城双写库存。</strong> 两地各扣同一 SKU 的 5000 件，30–50ms 同步窗口里必然超卖，对账补不回已发货的订单。库存写固定单方向，异地只读或异步。</li>
+<li><strong>单语言栈就上 ServiceMesh。</strong> 治理逻辑稳定、没有跨语言复用诉求时，代理每跳多一次转发，2 万 QPS 下这层开销要先压测，收益覆盖不了复杂度。</li>
+</ol>
+<p>下面这些情况，这套分层可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>单一语言、治理策略稳定</td>
+<td>没有跨语言复用压力</td>
+<td>治理逻辑放客户端库，不上代理层</td>
+</tr>
+<tr>
+<td>峰值不到单机拐点、无容灾要求</td>
+<td>多机房复杂度远大于收益</td>
+<td>单机房加备份，做好切换预案</td>
+</tr>
+<tr>
+<td>客户端单一、接口聚合很少</td>
+<td>网关做聚合收益低</td>
+<td>直连应用，少一层</td>
+</tr>
+<tr>
+<td>慢请求集中在单进程内</td>
+<td>跨进程链路还原用不上</td>
+<td>进程内分段耗时日志足够</td>
+</tr>
+<tr>
+<td>内部系统、无外部认证差异</td>
+<td>统一认证的价值不大</td>
+<td>应用内拦截器处理</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>组件</th>
+<th>管什么</th>
+<th>不管什么</th>
+<th>放错层的代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>负载均衡</td>
+<td>分发请求、屏蔽实例地址</td>
+<td>业务语义、认证</td>
+<td>客户端负载放错，注册中心形同虚设</td>
+</tr>
+<tr>
+<td>网关</td>
+<td>鉴权、限流、协议转换、requestId</td>
+<td>库存判定、参数校验、聚合</td>
+<td>业务改动牵连网关发版</td>
+</tr>
+<tr>
+<td>Trace</td>
+<td>单次慢请求的分段定位</td>
+<td>整体趋势、告警</td>
+<td>当监控用会漏掉整体劣化</td>
+</tr>
+<tr>
+<td>多机房</td>
+<td>数据归属与写入方向</td>
+<td>单机性能</td>
+<td>跨城双写库存直接超卖</td>
+</tr>
+<tr>
+<td>ServiceMesh</td>
+<td>治理逻辑跨语言复用</td>
+<td>业务逻辑</td>
+<td>单语言栈白付一跳转发</td>
+</tr>
+</tbody></table>
+<p>判断只有一句：<strong>横切逻辑进网关，业务语义留应用，先定写入方向再谈多机房</strong>。哪个组件想多揽一件事，先问它替掉的是哪一层的职责。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>入口这几层，值钱的不是选了哪个组件，是职责有没有划断。网关只做横切，业务语义留在应用，两者才能分开扩、分开发版；慢请求交给 Trace 还原分段，跨机房先定库存和订单归谁写，跨城同步写库存直接否掉；ServiceMesh 是多语言复用治理策略之后的选项。把这些边界定死，6 台网关和 20 台应用的扩容、隔离、定位才各归各层，不至于一处抖动顺着链传到底。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Michael T. Nygard, <em>Release It!</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/" title="高并发（九）服务治理与流量入口设计">https://xssdpgy.github.io/2023/06/26/高并发（九）服务治理与流量入口设计/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86/" rel="tag"># 服务治理</a>
+              <a href="/tags/%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7/" rel="tag"># 可观测性</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/" rel="prev" title="高并发（八）服务化拆分与 RPC 调用链">
+      <i class="fa fa-chevron-left"></i> 高并发（八）服务化拆分与 RPC 调用链
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/07/05/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%EF%BC%89%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E3%80%81%E5%8E%8B%E6%B5%8B%E4%B8%8E%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86/" rel="next" title="高并发（十）可观测性、压测与配置管理">
+      高并发（十）可观测性、压测与配置管理 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '1c770347a625923184d66d70f3f9905d',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

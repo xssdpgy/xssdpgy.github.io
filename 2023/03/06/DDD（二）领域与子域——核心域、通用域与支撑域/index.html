@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言面对没做过的业务，第一版架构最容易把名词平铺成模块，再把资源平均分掉。本篇讲初始子域划分：先判核心域、支撑域与通用域，按档位决定人力和自研深度，也给出这套分级不成立的条件。 一个团队接手从未做过的电商履约业务，评审会上给出的第一版架构，是把能想到的名词平铺成十四个一级模块：用户、商品、订单、库存、支付、促销、发票、物流、通知、字典、权限、报表、评价、售后。每个模块分一个小组、一个库、一套 CR">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DDD（二）领域与子域——核心域、通用域与支撑域">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/03/06/DDD%EF%BC%88%E4%BA%8C%EF%BC%89%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言面对没做过的业务，第一版架构最容易把名词平铺成模块，再把资源平均分掉。本篇讲初始子域划分：先判核心域、支撑域与通用域，按档位决定人力和自研深度，也给出这套分级不成立的条件。 一个团队接手从未做过的电商履约业务，评审会上给出的第一版架构，是把能想到的名词平铺成十四个一级模块：用户、商品、订单、库存、支付、促销、发票、物流、通知、字典、权限、报表、评价、售后。每个模块分一个小组、一个库、一套 CR">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-03-06T09:02:15.000Z">
+<meta property="article:modified_time" content="2023-03-06T09:02:15.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="DDD">
+<meta property="article:tag" content="领域建模">
+<meta property="article:tag" content="子域">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/03/06/DDD%EF%BC%88%E4%BA%8C%EF%BC%89%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>DDD（二）领域与子域——核心域、通用域与支撑域 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/03/06/DDD%EF%BC%88%E4%BA%8C%EF%BC%89%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          DDD（二）领域与子域——核心域、通用域与支撑域
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-03-06 17:02:15" itemprop="dateCreated datePublished" datetime="2023-03-06T17:02:15+08:00">2023-03-06</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>面对没做过的业务，第一版架构最容易把名词平铺成模块，再把资源平均分掉。本篇讲初始子域划分：先判核心域、支撑域与通用域，按档位决定人力和自研深度，也给出这套分级不成立的条件。</p>
+<p>一个团队接手从未做过的电商履约业务，评审会上给出的第一版架构，是把能想到的名词平铺成十四个一级模块：用户、商品、订单、库存、支付、促销、发票、物流、通知、字典、权限、报表、评价、售后。每个模块分一个小组、一个库、一套 CRUD，两周搭完骨架，排期表整齐漂亮。</p>
+<p>大促当天出了问题：同一 SKU 被超卖。追查下来，库存扣减散在两处——下单时在订单服务里执行一次 <code>update stock set available = available - n</code>，发货前又在履约服务里扣一次，中间没有锁定态，也没有占用记录。规则没有归属，更没有人把它当成需要认真设计的东西。</p>
+<p>坏味道通常长这样，库存被当成与字典、通知同构的通用能力：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：核心规则被降级为一次无状态的 UPDATE</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">StockService</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">lock</span><span class="params">(Long skuId, <span class="type">int</span> quantity)</span> &#123;</span><br><span class="line">        <span class="type">StockPO</span> <span class="variable">po</span> <span class="operator">=</span> stockMapper.selectById(skuId);</span><br><span class="line">        po.setAvailable(po.getAvailable() - quantity);</span><br><span class="line">        stockMapper.updateById(po);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>没有并发控制，没有”谁占用了这批货”的记录。这不是写得差，而是<strong>被放错了投入档位</strong>：最强的三个人派去做权限和消息中心，库存交给一个新人按 CRUD 实现。十四个模块被平均对待，等于没有判断。</p>
+<p>面对陌生业务，资源永远不够。初始划分要解决的不是”分得全不全”，而是先分出轻重：哪一块值得最强的人自研，哪一块能买，哪一块够用就行。分错档位，比少画一个框代价大得多。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p><strong>领域</strong>是要解决的业务问题范围，范围即边界；把范围逐层收窄，得到的更小问题域叫<strong>子域</strong>。子域只是问题空间的切分结果，还不是服务，也不是代码目录——陌生业务里，这一步最容易被跳过，直接跳到建表和服务名。</p>
+<p>按”重要性 + 功能属性”给子域分档，得到三类：</p>
+<ul>
+<li><strong>核心域</strong>：决定产品与公司的竞争力，承载本企业区别于对手的规则，去掉它业务就不成立。</li>
+<li><strong>支撑域</strong>：必需，但既非竞争力来源，也不是到处都能复用的通用功能；往往带企业特性，需要定制开发。</li>
+<li><strong>通用域</strong>：无个性化诉求、被多个子域共用、行业内已有成熟实现可直接采购，例如认证、权限、通知、数据字典。</li>
+</ul>
+<p>分档的唯一目的是<strong>决定投入</strong>，不是给架构图染色。同一块业务在不同公司会落在不同档位：支付通道对自营电商是支撑域，对支付公司就是核心域。子域是问题空间的切分，限界上下文是解空间的边界，二者不必一一对应。</p>
+<p>把贯穿案例按这三类摆开：</p>
+<pre class="mermaid">
+flowchart TB
+    D[&quot;领域：电商订单履约&quot;]
+    D --&gt; CORE
+    D --&gt; SUP
+    D --&gt; GEN
+    subgraph CORE[&quot;核心域：自研，最高投入&quot;]
+        C1[&quot;库存：可售、锁定与防超卖&quot;]
+        C2[&quot;履约：发货、时效承诺&quot;]
+    end
+    subgraph SUP[&quot;支撑域：定制开发&quot;]
+        S1[&quot;交易：订单状态机与定价&quot;]
+        S2[&quot;支付：渠道路由与对账&quot;]
+        S3[&quot;结算：佣金与发票&quot;]
+    end
+    subgraph GEN[&quot;通用域：外购 + 适配层&quot;]
+        G1[&quot;身份认证与权限&quot;]
+        G2[&quot;消息通知&quot;]
+        G3[&quot;数据字典&quot;]
+    end
+</pre>
+
+<p>库存与履约被判为核心域，前提是这家公司的差异化落在”大促不超卖”与”次日达”上；换一家以流量和低价立身的平台，核心域可能就是交易与促销。图是判定的结果，不是划分的起点。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>陌生业务的初始划分，只要求达到”能分派团队与预算”的粒度，不要求一次精确到可落库的模型。信息最少的时候定死边界，等于把猜测固化成架构。</p>
+<p><strong>第一步，先写一句业务边界，不画模块。</strong> 为下单用户，在承诺时效内把已支付的订单准确发出，且不超卖。这句话同时圈定范围和两个不可退让的指标，后面所有分档都要回溯到它。</p>
+<p><strong>第二步，列业务事实而不是名词。</strong> 沿流程把动作与结果写全：提交订单 → 订单已创建 → 库存已锁定 → 支付已完成 → 发货单已生成 → 订单已完成。命令与领域事件比”用户&#x2F;商品&#x2F;订单”这类名词更能暴露边界，因为规则总是挂在动作上，而不是挂在名字上。</p>
+<p><strong>第三步，按流程边界与业务关联度聚成候选子域。</strong> 相邻且共享同一批规则的动作合并，跨流程的强制拆开，得到交易、库存、支付、履约、结算，以及认证、通知、字典这些横切能力。经验值是一次划分控制在 5–9 个；超出这个数，多半是把功能模块当成了子域，应再合并一轮。</p>
+<p><strong>第四步，用核心域判定条件逐项定级。</strong> 下面五问是可检验的，不靠感觉：</p>
+<table>
+<thead>
+<tr>
+<th>判定条件</th>
+<th>问的是什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>去掉它，产品是否就不成立</td>
+<td>是否直接决定客户选择与付费</td>
+</tr>
+<tr>
+<td>行业里是否有可直接采购的等价实现</td>
+<td>有，基本排除核心域</td>
+</tr>
+<tr>
+<td>是否承载本公司独有的规则或算法</td>
+<td>是，核心域的强信号</td>
+</tr>
+<tr>
+<td>规则变更频率与出错代价是否最高</td>
+<td>决定投入上限</td>
+</tr>
+<tr>
+<td>出错是否致命、且换供应商也补不回来</td>
+<td>决定是否必须自主掌控</td>
+</tr>
+</tbody></table>
+<p>逐项过一遍候选子域：</p>
+<table>
+<thead>
+<tr>
+<th>候选子域</th>
+<th>采购可得</th>
+<th>独有规则</th>
+<th>出错代价</th>
+<th>档位</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>库存（可售与锁定）</td>
+<td>否</td>
+<td>是：占用、释放、防超卖</td>
+<td>高</td>
+<td>核心域</td>
+</tr>
+<tr>
+<td>履约（时效与发货）</td>
+<td>否</td>
+<td>是：时效承诺与路由</td>
+<td>高</td>
+<td>核心域</td>
+</tr>
+<tr>
+<td>交易（订单状态机）</td>
+<td>部分</td>
+<td>一般</td>
+<td>中</td>
+<td>支撑域</td>
+</tr>
+<tr>
+<td>支付（渠道路由与对账）</td>
+<td>通道可购，对账需自研</td>
+<td>部分</td>
+<td>中</td>
+<td>支撑域</td>
+</tr>
+<tr>
+<td>结算、发票</td>
+<td>部分</td>
+<td>弱</td>
+<td>中</td>
+<td>支撑域</td>
+</tr>
+<tr>
+<td>认证、权限、通知、字典</td>
+<td>是</td>
+<td>无</td>
+<td>低</td>
+<td>通用域</td>
+</tr>
+</tbody></table>
+<p>定级只是分类，真正落地的是投入差异。三类子域不该用同一套人力和标准：</p>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>判定依据</th>
+<th>团队与掌控</th>
+<th>建设策略</th>
+<th>测试与质量投入</th>
+<th>演进方式</th>
+<th>失败代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>核心域</td>
+<td>去掉即不成立、有独有规则、采购不可得</td>
+<td>最强团队，完全自主掌控，拒绝外包</td>
+<td>全自研，领域模型持续投入</td>
+<td>最高：规则级单测、并发与压测</td>
+<td>高频演进，边界可重构</td>
+<td>丢壁垒，致命</td>
+</tr>
+<tr>
+<td>支撑域</td>
+<td>必需、带企业特性、非竞争力来源</td>
+<td>内部团队定制开发</td>
+<td>自研或基于开源二次开发，够用即可</td>
+<td>中：主流程覆盖</td>
+<td>随业务调整</td>
+<td>影响交付，可补救</td>
+</tr>
+<tr>
+<td>通用域</td>
+<td>无个性化、被多子域共用、可采购</td>
+<td>无需专职团队</td>
+<td>外购 + 适配层，最小化定制</td>
+<td>低：验收与集成即可</td>
+<td>尽量不动，版本跟随供应商</td>
+<td>低，可替换</td>
+</tr>
+</tbody></table>
+<p><strong>第五步，给模糊地带留活口。</strong> 交易与促销边界不清、支付与结算时有重叠，都标成”暂不判定”，先按一个团队、一个代码库推进，流程跑顺再拆。这里有个策略取舍：全新系统用自顶向下，先按战略分解再建模型；遗留系统改造用自底向上，先盘点既有模型再归并共性。陌生业务从零起步，选自顶向下，但只做一层，不逐级分解到底——对二三级子域的判断，此时大概率是错的。</p>
+<pre class="mermaid">
+flowchart LR
+    A[&quot;业务边界一句话&quot;] --&gt; B[&quot;列命令与领域事件&quot;]
+    B --&gt; C[&quot;按流程边界聚成候选子域&quot;]
+    C --&gt; D[&quot;五问判定条件定级&quot;]
+    D --&gt; E[&quot;产出投入决策与仓库结构&quot;]
+    D -.-&gt; F[&quot;模糊处标暂不判定，后续再拆&quot;]
+</pre>
+
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>分档要能在仓库结构上被读出来，否则很快退化成口头共识。核心域独立成模块、独占最强人力；通用域只留一层薄适配，隔离采购产品的 SDK。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">fulfillment-platform/</span><br><span class="line">├── core-domain/                    # 核心域：自研，不外购</span><br><span class="line">│   ├── inventory-context/          # 库存：可售、锁定、防超卖</span><br><span class="line">│   │   └── domain/</span><br><span class="line">│   │       ├── SkuStock.java       # 聚合根</span><br><span class="line">│   │       └── StockLockService.java</span><br><span class="line">│   └── delivery-context/           # 履约：发货、时效</span><br><span class="line">├── supporting-domain/              # 支撑域：定制开发</span><br><span class="line">│   ├── trading-context/</span><br><span class="line">│   └── payment-context/</span><br><span class="line">└── generic-domain/                 # 通用域：外购 + 适配层</span><br><span class="line">    ├── identity/adapter/           # 隔离外部 IAM SDK</span><br><span class="line">    └── notification/adapter/</span><br></pre></td></tr></table></figure>
+
+<p>核心域的代码密度明显不同，它值得把规则建成对象，而不是写成 SQL：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 核心域：锁定是一组有归属的规则，不是一次 UPDATE</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">StockLockService</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> SkuRepository skuRepository;      <span class="comment">// 资源库接口</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> DomainEventPublisher publisher;   <span class="comment">// 领域事件发布</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">StockLockService</span><span class="params">(SkuRepository skuRepository,</span></span><br><span class="line"><span class="params">                            DomainEventPublisher publisher)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.skuRepository = Objects.requireNonNull(skuRepository);</span><br><span class="line">        <span class="built_in">this</span>.publisher = Objects.requireNonNull(publisher);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 事务由应用层开启，服务只表达业务规则</span></span><br><span class="line">    <span class="keyword">public</span> LockResult <span class="title function_">lock</span><span class="params">(OrderId orderId, List&lt;LockLine&gt; lines)</span> &#123;</span><br><span class="line">        <span class="keyword">for</span> (LockLine line : lines) &#123;</span><br><span class="line">            <span class="type">SkuStock</span> <span class="variable">stock</span> <span class="operator">=</span> skuRepository.findByIdForUpdate(line.getSkuId());</span><br><span class="line">            <span class="keyword">if</span> (!stock.canLock(line.getQuantity())) &#123;</span><br><span class="line">                <span class="keyword">return</span> LockResult.rejected(line.getSkuId(), <span class="string">&quot;可售不足&quot;</span>);</span><br><span class="line">            &#125;</span><br><span class="line">            stock.lock(orderId, line.getQuantity());</span><br><span class="line">            skuRepository.save(stock);</span><br><span class="line">        &#125;</span><br><span class="line">        publisher.publish(<span class="keyword">new</span> <span class="title class_">StockLocked</span>(orderId));</span><br><span class="line">        <span class="keyword">return</span> LockResult.accepted();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>SkuRepository</code> 是接口，锁定态、占用记录与并发控制都落在库存聚合根内；通用域恰好相反，除了一层适配层几乎不写业务代码。同样是”一个子域一个人”，两处代码量可以差一个数量级，这正是分档要买到的东西。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>按名词平均切分。</strong> 把字典、通知与订单平级排期，等于放弃判断；十四个模块平均用力，最该深挖的那块最容易被草草带过。</li>
+<li><strong>按部门划子域。</strong> 组织边界是历史结果，不是业务边界；照组织架构切，会把一条流程规则劈给两个团队。</li>
+<li><strong>把核心域外包或外购。</strong> 省下的是一次性成本，丢掉的是规则演进权；核心域必须自主掌控。</li>
+<li><strong>一次到位、追求终态划分。</strong> 陌生业务信息最少，此时定死的二三级边界多半是猜测；划分要能撤回。</li>
+<li><strong>用同一套标准要求所有子域。</strong> 给通用域做充血模型和事件风暴，或给核心域套 CRUD 模板，都是投入错配。</li>
+</ol>
+<p>以下情形建议<strong>不做三类分级</strong>，或只做粗分：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>以 CRUD、报表、数据搬运为主，规则少且稳定</td>
+<td>直接按模块分层，不做分档</td>
+</tr>
+<tr>
+<td>一次性交付、后续不再演进</td>
+<td>划分只到”能分工”即可，不建领域模型</td>
+</tr>
+<tr>
+<td>领域专家缺席，需求只有文档</td>
+<td>先补沟通机制，暂缓核心域认定</td>
+</tr>
+<tr>
+<td>商业模式尚在试水、战略未稳</td>
+<td>不急于定核心域，用可迁移的薄边界兜底</td>
+</tr>
+<tr>
+<td>团队不足两个小组</td>
+<td>分级带来的协调成本大于收益，保持单模块</td>
+</tr>
+</tbody></table>
+<p>分级的前提是资源确实稀缺、各子域的重要性又能拉开差距；两者只要有一个不成立，平铺反而是最省事的选择。</p>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>概念</th>
+<th>关注点</th>
+<th>判定 &#x2F; 动作</th>
+<th>常见误区</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>领域</td>
+<td>业务范围</td>
+<td>一句话写清边界与不可退让指标</td>
+<td>一上来就列模块</td>
+</tr>
+<tr>
+<td>子域</td>
+<td>问题空间切分</td>
+<td>按流程边界与关联度聚类，5–9 个</td>
+<td>当成服务或代码目录</td>
+</tr>
+<tr>
+<td>核心域</td>
+<td>竞争力来源</td>
+<td>五问判定，最强团队自研、拒绝外购</td>
+<td>按”重不重要”拍脑袋</td>
+</tr>
+<tr>
+<td>支撑域</td>
+<td>必需但非壁垒</td>
+<td>定制开发，够用即演进</td>
+<td>与通用域混为一谈</td>
+</tr>
+<tr>
+<td>通用域</td>
+<td>可采购、被共用</td>
+<td>外购 + 适配层，最小化定制</td>
+<td>重复造轮子</td>
+</tr>
+<tr>
+<td>初始划分</td>
+<td>分派团队与预算</td>
+<td>只做一层，模糊处标”暂不判定”</td>
+<td>逐级分解到终态</td>
+</tr>
+<tr>
+<td>投入决策</td>
+<td>资源稀缺</td>
+<td>按档位拉开人力、测试与自研深度</td>
+<td>十四个模块平均用力</td>
+</tr>
+</tbody></table>
+<p>一条主线：<strong>业务事实 → 候选子域 → 判定条件定级 → 投入决策 → 仓库结构</strong>。分档不是给图染色，是决定谁来做、做多深、能不能买。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>陌生业务的第一版架构，最贵的错误不是少画一个框，而是把核心规则放进了通用档位。子域划分的产物不是一张分类图，而是一份能直接分派人力与预算的决策：核心域自主掌控，支撑域定制开发，通用域能买就买。判定依赖公司战略，会随商业模式变化，所以初始划分只做一层、留活口，比一次画到终态更耐用。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>欧创新《DDD 实战课》</li>
+<li>Eric Evans, <em>Domain-Driven Design: Tackling Complexity in the Heart of Software</em>, 2004</li>
+<li>Vaughn Vernon, <em>Implementing Domain-Driven Design</em>, 2013</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/03/06/DDD%EF%BC%88%E4%BA%8C%EF%BC%89%E9%A2%86%E5%9F%9F%E4%B8%8E%E5%AD%90%E5%9F%9F%E2%80%94%E2%80%94%E6%A0%B8%E5%BF%83%E5%9F%9F%E3%80%81%E9%80%9A%E7%94%A8%E5%9F%9F%E4%B8%8E%E6%94%AF%E6%92%91%E5%9F%9F/" title="DDD（二）领域与子域——核心域、通用域与支撑域">https://xssdpgy.github.io/2023/03/06/DDD（二）领域与子域——核心域、通用域与支撑域/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/DDD/" rel="tag"># DDD</a>
+              <a href="/tags/%E9%A2%86%E5%9F%9F%E5%BB%BA%E6%A8%A1/" rel="tag"># 领域建模</a>
+              <a href="/tags/%E5%AD%90%E5%9F%9F/" rel="tag"># 子域</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/03/04/DDD%EF%BC%88%E4%B8%80%EF%BC%89%E9%A2%86%E5%9F%9F%E9%A9%B1%E5%8A%A8%E8%AE%BE%E8%AE%A1%E6%A6%82%E8%BF%B0%E2%80%94%E2%80%94%E4%B8%8E%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%AE%BE%E8%AE%A1%E7%9A%84%E5%85%B3%E7%B3%BB/" rel="prev" title="DDD（一）领域驱动设计概述——与微服务设计的关系">
+      <i class="fa fa-chevron-left"></i> DDD（一）领域驱动设计概述——与微服务设计的关系
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/03/09/DDD%EF%BC%88%E4%B8%89%EF%BC%89%E9%80%9A%E7%94%A8%E8%AF%AD%E8%A8%80%E4%B8%8E%E9%99%90%E7%95%8C%E4%B8%8A%E4%B8%8B%E6%96%87/" rel="next" title="DDD（三）通用语言与限界上下文">
+      DDD（三）通用语言与限界上下文 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '1dc4ee7667cb180397df7587847e0af1',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

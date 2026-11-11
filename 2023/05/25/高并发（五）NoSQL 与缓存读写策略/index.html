@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言NoSQL 不是关系库的替代品，它只补关系库扛不住的那类查询；选谁按查询形态定，不按数据量拍。先看常见的商品详情页：单 SKU、库存 5000 件、30 万人预约，整点开抢后峰值 2 万 QPS，一次打开要取标题、规格、价格和库存，按 3 倍读放大就是每秒 6 万次。关系库接不住，详情要么整块搬去 NoSQL，要么前面加一层缓存；迁移那几天新旧两份都在写，读到的值算谁的，得先定下来。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（五）NoSQL 与缓存读写策略">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/05/25/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%94%EF%BC%89NoSQL%20%E4%B8%8E%E7%BC%93%E5%AD%98%E8%AF%BB%E5%86%99%E7%AD%96%E7%95%A5/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言NoSQL 不是关系库的替代品，它只补关系库扛不住的那类查询；选谁按查询形态定，不按数据量拍。先看常见的商品详情页：单 SKU、库存 5000 件、30 万人预约，整点开抢后峰值 2 万 QPS，一次打开要取标题、规格、价格和库存，按 3 倍读放大就是每秒 6 万次。关系库接不住，详情要么整块搬去 NoSQL，要么前面加一层缓存；迁移那几天新旧两份都在写，读到的值算谁的，得先定下来。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-05-25T15:47:39.000Z">
+<meta property="article:modified_time" content="2023-05-25T15:47:39.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="数据架构">
+<meta property="article:tag" content="缓存">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/05/25/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%94%EF%BC%89NoSQL%20%E4%B8%8E%E7%BC%93%E5%AD%98%E8%AF%BB%E5%86%99%E7%AD%96%E7%95%A5/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（五）NoSQL 与缓存读写策略 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/05/25/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%94%EF%BC%89NoSQL%20%E4%B8%8E%E7%BC%93%E5%AD%98%E8%AF%BB%E5%86%99%E7%AD%96%E7%95%A5/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（五）NoSQL 与缓存读写策略
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-05-25 23:47:39" itemprop="dateCreated datePublished" datetime="2023-05-25T23:47:39+08:00">2023-05-25</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>NoSQL 不是关系库的替代品，它只补关系库扛不住的那类查询；选谁按查询形态定，不按数据量拍。先看常见的商品详情页：单 SKU、库存 5000 件、30 万人预约，整点开抢后峰值 2 万 QPS，一次打开要取标题、规格、价格和库存，按 3 倍读放大就是每秒 6 万次。关系库接不住，详情要么整块搬去 NoSQL，要么前面加一层缓存；迁移那几天新旧两份都在写，读到的值算谁的，得先定下来。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>按查询形态分工，比按数据量决定存储更靠得住。关系库的价值是关联查询、事务和二级索引，这块不该往外搬；NoSQL 补的是它扛不动的部分。写入快的一类多用 LSM 树，把随机写攒成内存里的有序结构再顺序落盘，代价是读要翻多层文件，读性能是让出去的。以下对应关系可以直接拿来选型：</p>
+<table>
+<thead>
+<tr>
+<th>查询形态</th>
+<th>典型诉求</th>
+<th>落点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>按主键点查、热点读</td>
+<td>极低延迟、高 QPS</td>
+<td>缓存 &#x2F; KV 存储</td>
+</tr>
+<tr>
+<td>字段多变的商品详情</td>
+<td>免改表、整文档读写</td>
+<td>文档库</td>
+</tr>
+<tr>
+<td>名称模糊搜索</td>
+<td>分词、倒排</td>
+<td>搜索引擎</td>
+</tr>
+<tr>
+<td>离线统计、海量写入</td>
+<td>顺序写、横向扩</td>
+<td>列式存储</td>
+</tr>
+<tr>
+<td>关联查询、事务</td>
+<td>强一致、可追溯</td>
+<td>关系库</td>
+</tr>
+</tbody></table>
+<p>Cache Aside 是缓存加关系库这套组合里最常用的读写策略，数据以库为准，缓存按需加载。读路径四步：读缓存、命中就返回、未命中查库、回种缓存再返回。写路径两步：<strong>先更新库，再删缓存</strong>。删而不是改，是因为两个写请求并发改同一个缓存值会乱序覆盖，读改写还会丢失更新；删掉让下一次读自己回种，是成本最低的写法。</p>
+<p>先删缓存再更新库，并发读会在库还没改完时把旧值回种，缓存里长期是脏的。先更新库再删缓存也有一个理论窗口：读请求未命中、已从库里拿到旧值，此时写请求更新了库并删了缓存，读请求随后才把旧值写回缓存。这个窗口出现的概率不高，因为写缓存通常比写库快一个数量级，很难反过来赶上；真出现了，靠短过期时间兜底，过期后下一次读会重新加载。<strong>要求强一致的读不能靠这套策略</strong>，这是它的边界，不是缺陷。</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant A as 读请求
+    participant B as 写请求
+    participant C as 缓存
+    participant D as 关系库
+    A-&gt;&gt;C: get sku:1001 未命中
+    A-&gt;&gt;D: select 得到旧值 20
+    B-&gt;&gt;D: update 改成 21
+    B-&gt;&gt;C: del sku:1001
+    A-&gt;&gt;C: set sku:1001 &#x3D; 20 回种旧值
+    Note over C,D: 短过期时间内缓存与库不一致
+</pre>
+
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把大促秒杀的设定摆一遍：单 SKU、库存 5000 件、预约 30 万人、整点开抢，日常下单 200 QPS、P99 60ms，峰值 2 万 QPS，验收目标是 2 万 QPS 下 P99 &lt; 200ms、P999 &lt; 1s、错误率 &lt; 0.1%，链路为下单 → 锁库存 → 支付 → 发货。分层结论是网关 6 台、应用 20 台、缓存 3 分片、数据库同步写入不成立。</p>
+<p>商品详情的读放大按 3 倍算，2 万 QPS 落到缓存就是每秒 6 万次，3 分片每片约 2 万次，落在单分片能力之内；关系库直接接这 6 万次不成立。详情字段多、读多写少、允许秒级延迟，适合整份放到文档库或缓存，读路径一律走 Cache Aside。库存是另一回事：它是强一致计数，扣减要在缓存里做原子操作或留在关系库用事务，不能因为「详情搬走了」就把它也塞进最终一致的文档库。名称模糊搜索也不该留在关系库，前置通配的 like 用不上索引，会退化成全表扫描，交给倒排索引才对。</p>
+<p>难点在迁移期。秒杀商品数据从关系库迁往缓存与文档库，存量同步加增量双写跑起来后，同一份数据在新旧两处都存在。这时 Cache Aside 的删缓存顺序会被放大：一次更新既要写旧库、写新库，又要删掉对应的缓存键，任何一步漏删或顺序错位，读请求就可能在两个库之间拿到不同版本。所以迁移期不追求「切换瞬间一致」，而是用步骤把不一致关在可控窗口里，并且让旧库一直保持可写。</p>
+<pre class="mermaid">
+flowchart LR
+    S0[&quot;旧库单写&quot;] --&gt; S1[&quot;① 双写：存量同步 + 增量写新旧两库，旧库为准&quot;]
+    S1 --&gt; S2[&quot;② 灰度读：10% → 50% 读流量切新库&quot;]
+    S2 --&gt; S3[&quot;③ 校验：抽样比对新旧一致，工具提前备好&quot;]
+    S3 --&gt; S4[&quot;④ 切读：100% 读切新库，双写保留&quot;]
+    S4 --&gt; S5[&quot;观察数日后停写旧库&quot;]
+    S1 -.-&gt; RB[&quot;回滚：读开关拨回旧库，旧库全程在写&quot;]
+    S2 -.-&gt; RB
+    S3 -.-&gt; RB
+    S4 -.-&gt; RB
+</pre>
+
+<p>四步的判定点要写死：双写阶段新库写失败要记日志补写，不能默默丢；灰度读每次只放一小段流量，观察 P99 与错误率；校验用抽样比对，工具在动手迁移前就得在测试环境跑通；切读后双写再保留几天，确认没问题才停写旧库。回滚路径不是事后再想——双写期间旧库始终有全量写入，把读开关拨回去就是回滚，代价只是之前那点灰度流量读到了新库。周期长、业务代码要改造，是这套方案的账。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/</span><br><span class="line">│   └── web/ProductController.java</span><br><span class="line">├── application/</span><br><span class="line">│   └── ProductQueryService.java</span><br><span class="line">├── infrastructure/</span><br><span class="line">│   ├── cache/CacheAsideStore.java</span><br><span class="line">│   ├── cache/CacheClient.java</span><br><span class="line">│   ├── nosql/ProductDocDao.java</span><br><span class="line">│   └── persistence/ProductDao.java</span><br><span class="line">└── migration/</span><br><span class="line">    ├── DualWriter.java</span><br><span class="line">    └── DataVerifier.java</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.cache;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 旁路缓存：数据以关系库为准，缓存按需加载；写路径先更新库再删缓存。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">CacheAsideStore</span> &#123;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 空值哨兵：区分「库里没有」与「缓存未命中」，挡住不存在 SKU 的反复回源。 */</span></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">NULL_MARK</span> <span class="operator">=</span> <span class="string">&quot;__NULL__&quot;</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> CacheClient cache;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> ProductDao dao;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> ttlSeconds;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">CacheAsideStore</span><span class="params">(CacheClient cache, ProductDao dao, <span class="type">long</span> ttlSeconds)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.cache = cache;</span><br><span class="line">        <span class="built_in">this</span>.dao = dao;</span><br><span class="line">        <span class="built_in">this</span>.ttlSeconds = ttlSeconds;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Product <span class="title function_">find</span><span class="params">(<span class="type">long</span> skuId)</span> &#123;</span><br><span class="line">        <span class="type">String</span> <span class="variable">key</span> <span class="operator">=</span> key(skuId);</span><br><span class="line">        <span class="type">String</span> <span class="variable">raw</span> <span class="operator">=</span> cache.get(key);</span><br><span class="line">        <span class="keyword">if</span> (NULL_MARK.equals(raw)) &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="literal">null</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (raw != <span class="literal">null</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span> Product.decode(raw);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">Product</span> <span class="variable">p</span> <span class="operator">=</span> dao.load(skuId);</span><br><span class="line">        <span class="keyword">if</span> (p == <span class="literal">null</span>) &#123;</span><br><span class="line">            <span class="comment">// 空值只留很短时间，防止占满缓存挤掉热点数据</span></span><br><span class="line">            cache.setex(key, <span class="number">10</span>, NULL_MARK);</span><br><span class="line">            <span class="keyword">return</span> <span class="literal">null</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        cache.setex(key, ttlSeconds, p.encode());</span><br><span class="line">        <span class="keyword">return</span> p;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">update</span><span class="params">(Product p)</span> &#123;</span><br><span class="line">        dao.update(p);                       <span class="comment">// 第一步：先落库</span></span><br><span class="line">        cache.del(key(p.getSkuId()));        <span class="comment">// 第二步：再删缓存，不写新值</span></span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> String <span class="title function_">key</span><span class="params">(<span class="type">long</span> skuId)</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> <span class="string">&quot;sku:&quot;</span> + skuId;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">interface</span> <span class="title class_">CacheClient</span> &#123;</span><br><span class="line">    String <span class="title function_">get</span><span class="params">(String key)</span>;</span><br><span class="line">    <span class="keyword">void</span> <span class="title function_">setex</span><span class="params">(String key, <span class="type">long</span> seconds, String value)</span>;</span><br><span class="line">    <span class="keyword">void</span> <span class="title function_">del</span><span class="params">(String key)</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">interface</span> <span class="title class_">ProductDao</span> &#123;</span><br><span class="line">    Product <span class="title function_">load</span><span class="params">(<span class="type">long</span> skuId)</span>;</span><br><span class="line">    <span class="keyword">void</span> <span class="title function_">update</span><span class="params">(Product p)</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">Product</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> skuId;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> String title;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> priceCents;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">int</span> stock;</span><br><span class="line"></span><br><span class="line">    Product(<span class="type">long</span> skuId, String title, <span class="type">long</span> priceCents, <span class="type">int</span> stock) &#123;</span><br><span class="line">        <span class="built_in">this</span>.skuId = skuId;</span><br><span class="line">        <span class="built_in">this</span>.title = title;</span><br><span class="line">        <span class="built_in">this</span>.priceCents = priceCents;</span><br><span class="line">        <span class="built_in">this</span>.stock = stock;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="type">long</span> <span class="title function_">getSkuId</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> skuId;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 前三项定长，余下整段留给标题，标题含分隔符也不会错切。 */</span></span><br><span class="line">    String <span class="title function_">encode</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> skuId + <span class="string">&quot;|&quot;</span> + priceCents + <span class="string">&quot;|&quot;</span> + stock + <span class="string">&quot;|&quot;</span> + title;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">static</span> Product <span class="title function_">decode</span><span class="params">(String raw)</span> &#123;</span><br><span class="line">        String[] parts = raw.split(<span class="string">&quot;\\|&quot;</span>, <span class="number">4</span>);</span><br><span class="line">        <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Product</span>(Long.parseLong(parts[<span class="number">0</span>]), parts[<span class="number">3</span>],</span><br><span class="line">                Long.parseLong(parts[<span class="number">1</span>]), Integer.parseInt(parts[<span class="number">2</span>]));</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这段实现有明确边界：删缓存失败没有重试，靠的是短过期时间兜底，真要收紧就得给删除加重试或异步补偿；空值哨兵的存活时间比业务键短一个量级，避免撑爆内存；写路径刻意不碰缓存值，把并发覆盖的风险挡在外面。库存扣减、资格判定这类要求读到的就是最新值的操作，不能走这段，得换成单键原子操作或数据库事务。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>把 NoSQL 当关系库整体替换。</strong> 关联查询、跨表事务、二级索引一起丢掉，搜索和账务都要另起炉灶，最后常常再切回来。补位可以，替代不成立。</li>
+<li><strong>先删缓存再更新库。</strong> 并发读会在库改完之前把旧值回种，脏数据会一直留到下次更新，删缓存的顺序不能反。</li>
+<li><strong>写路径里顺手把新值写回缓存。</strong> 两个写请求乱序会互相覆盖，读改写还会丢失更新，删缓存是这里成本最低的做法。</li>
+<li><strong>存量同步完就把数据源一步切到新库。</strong> 增量已经写进新库、旧库没有，发现问题也回不去，等于没有回滚路径。</li>
+<li><strong>没写校验工具就切读。</strong> 抽样比对要提前在测试环境跑通，靠切换后肉眼核对，等于把校验这一步省掉了。</li>
+</ol>
+<p>下面这些情况，这套读写策略与迁移步骤可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>内部后台、报表，峰值不到单机拐点十分之一</td>
+<td>关系库直接扛得住，缓存层是净成本</td>
+<td>单库加索引，不加缓存</td>
+</tr>
+<tr>
+<td>字段固定、关联密集的账务与结算</td>
+<td>缺跨表事务，一致性优先级更高</td>
+<td>留在关系库用事务</td>
+</tr>
+<tr>
+<td>数据量小且没有扩展预期</td>
+<td>分片与文档库都是为扩展准备的</td>
+<td>单库单表，定期归档</td>
+</tr>
+<tr>
+<td>一次性活动页，内容全静态</td>
+<td>请求在静态层就被挡完</td>
+<td>静态化加就近分发</td>
+</tr>
+<tr>
+<td>强一致的库存扣减与资格判定</td>
+<td>读写策略允许短时不一致</td>
+<td>原子扣减或数据库事务</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>决策点</th>
+<th>结论</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>关系库与 NoSQL</td>
+<td>按查询形态分工，互补不替代</td>
+<td>两套存储，运维与一致性成本</td>
+</tr>
+<tr>
+<td>商品详情</td>
+<td>文档库或缓存，允许秒级延迟</td>
+<td>迁移期要双写</td>
+</tr>
+<tr>
+<td>库存扣减</td>
+<td>留在关系库或单键原子操作</td>
+<td>用不上文档库的扩展便利</td>
+</tr>
+<tr>
+<td>Cache Aside 写顺序</td>
+<td>先更新库，再删缓存</td>
+<td>残留一个低概率脏数据窗口</td>
+</tr>
+<tr>
+<td>残留不一致</td>
+<td>短过期时间兜底</td>
+<td>强一致场景不适用</td>
+</tr>
+<tr>
+<td>迁移四步</td>
+<td>双写 → 灰度读 → 校验 → 切读</td>
+<td>周期长，业务代码要改造</td>
+</tr>
+<tr>
+<td>回滚</td>
+<td>双写期间读开关随时拨回旧库</td>
+<td>旧库需一直保留写入能力</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>按查询形态选存储，比按数据量拍脑袋省事。热点点查交给缓存就够了；商品详情字段多变，放文档库比不断改表省事；模糊搜索得靠倒排索引，关系库做不了分词。事务和关联查询仍归关系库，这块不该往外搬。Cache Aside 的删缓存顺序是并发下读不读得到旧值的分界，不是习惯问题，残留窗口能接受多久要在方案里写明。迁移把双写和回滚留在手边，切读才敢做，代价是周期和代码改造。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Martin Kleppmann, <em>Designing Data-Intensive Applications</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/05/25/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%94%EF%BC%89NoSQL%20%E4%B8%8E%E7%BC%93%E5%AD%98%E8%AF%BB%E5%86%99%E7%AD%96%E7%95%A5/" title="高并发（五）NoSQL 与缓存读写策略">https://xssdpgy.github.io/2023/05/25/高并发（五）NoSQL 与缓存读写策略/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%95%B0%E6%8D%AE%E6%9E%B6%E6%9E%84/" rel="tag"># 数据架构</a>
+              <a href="/tags/%E7%BC%93%E5%AD%98/" rel="tag"># 缓存</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/05/17/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%9B%9B%EF%BC%89%E5%88%86%E5%BA%93%E5%88%86%E8%A1%A8%E4%B8%8E%E5%85%A8%E5%B1%80%E5%94%AF%E4%B8%80%20ID/" rel="prev" title="高并发（四）分库分表与全局唯一 ID">
+      <i class="fa fa-chevron-left"></i> 高并发（四）分库分表与全局唯一 ID
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/06/07/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AD%EF%BC%89%E7%BC%93%E5%AD%98%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E7%A9%BF%E9%80%8F%E9%98%B2%E6%8A%A4%E4%B8%8E%E9%9D%99%E6%80%81%E5%8A%A0%E9%80%9F/" rel="next" title="高并发（六）缓存高可用、穿透防护与静态加速">
+      高并发（六）缓存高可用、穿透防护与静态加速 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'e548d7bf9395aa13c397c80f346928b3',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

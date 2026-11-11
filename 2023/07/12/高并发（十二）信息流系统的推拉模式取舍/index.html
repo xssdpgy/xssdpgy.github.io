@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言推模式读快但写放大，拉模式写省但读贵，分界线在粉丝量上：一个大 V 发一条动态要复制上千万份，推到这里成本就翻过去了。未读数计数和信息流是同一类海量读模型，都在解一次写、海量读怎么摊薄。先看秒杀活动页：「预约 30 万」「已抢到 X 件」每刷新一次都要读，活动动态又要按时间倒序铺给 30 万人，两种读压到同一套存储上，选推还是选拉得先算账。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（十二）信息流系统的推拉模式取舍">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言推模式读快但写放大，拉模式写省但读贵，分界线在粉丝量上：一个大 V 发一条动态要复制上千万份，推到这里成本就翻过去了。未读数计数和信息流是同一类海量读模型，都在解一次写、海量读怎么摊薄。先看秒杀活动页：「预约 30 万」「已抢到 X 件」每刷新一次都要读，活动动态又要按时间倒序铺给 30 万人，两种读压到同一套存储上，选推还是选拉得先算账。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-07-12T01:22:08.000Z">
+<meta property="article:modified_time" content="2023-07-12T01:22:08.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="数据架构">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（十二）信息流系统的推拉模式取舍 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（十二）信息流系统的推拉模式取舍
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-07-12 09:22:08" itemprop="dateCreated datePublished" datetime="2023-07-12T09:22:08+08:00">2023-07-12</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.6k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>推模式读快但写放大，拉模式写省但读贵，分界线在粉丝量上：一个大 V 发一条动态要复制上千万份，推到这里成本就翻过去了。未读数计数和信息流是同一类海量读模型，都在解一次写、海量读怎么摊薄。先看秒杀活动页：「预约 30 万」「已抢到 X 件」每刷新一次都要读，活动动态又要按时间倒序铺给 30 万人，两种读压到同一套存储上，选推还是选拉得先算账。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>推模式也叫写扩散。发布者写一条内容，系统把它的 ID 复制进每个粉丝的收件箱，读的时候只查自己那一个收件箱，一次查询出结果。写进去的份数等于粉丝数，存储也按粉丝数复制。拉模式也叫读扩散，发布只写自己的发件箱，读者刷新时把关注的所有人的发件箱取出来，按时间倒序归并。写只有一份，代价落在读上：要聚合 N 份、再排序，N 是关注数，而关注数有上限。</p>
+<p>把两者写成同一笔账，取舍就清楚了。设粉丝数 F、关注数 C、单位时间发布条数 P、单位时间读取次数 R：</p>
+<ul>
+<li>推：单条写入成本约 F，读成本约 1，总成本约 <code>P × F + R × 1</code>。</li>
+<li>拉：单条写入成本约 1，读成本约 C，总成本约 <code>P × 1 + R × C</code>。</li>
+</ul>
+<p>推和拉谁划算，比的是 <code>P × F</code> 和 <code>R × C</code> 哪一个先顶到上限。F 小的时候推几乎免费，读还最快；F 涨到千万级，<code>P × F</code> 变成天文数字，推不成立，这就是成本拐点。拉不是没有代价，C 有上限所以聚合量可控，但要在毫秒级归并完，得靠缓存只放热数据——浏览行为里九成以上集中在最近几天，缓存这几天的内容，并行批量取回再在内存里排，再用缓存副本分摊带宽。</p>
+<pre class="mermaid">
+flowchart TB
+    subgraph PUSH[&quot;推模式：写扩散&quot;]
+        A1[&quot;发布 1 条&quot;] --&gt; A2[&quot;写自己发件箱&quot;]
+        A2 --&gt; A3[&quot;复制到粉丝 A 收件箱&quot;]
+        A2 --&gt; A4[&quot;复制到粉丝 B 收件箱&quot;]
+        A2 --&gt; A5[&quot;复制到 N 个收件箱 写放大 N 倍&quot;]
+    end
+    subgraph PULL[&quot;拉模式：读扩散&quot;]
+        B1[&quot;发布 1 条&quot;] --&gt; B2[&quot;只写自己发件箱&quot;]
+        B3[&quot;读者刷新&quot;] --&gt; B4[&quot;聚合关注人发件箱 按时间归并&quot;]
+        B2 --&gt; B4
+    end
+</pre>
+
+<p>未读数和信息流是同一类问题：一次写入，被海量读反复消费。差别只在能不能找到一份共享存储。系统通知、活动红点这类，全部用户看的是同一份列表，解法是只存一个全局总数，每人记一个「上次看到哪条」的偏移量，未读数等于偏移量之后的条数，发布时只增一个数，不碰任何用户记录。信息流未读数麻烦一些，每个人关注的人不同、没有共享列表，改用发布数快照：未读数等于关注人当前发布总数减去上次查看时的快照总数。这类计数用户分不出 10 条和 11 条的差别，可以用近似换成本；预约数、库存这类数字敏感，不能这么放。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>大促秒杀的既定容量是网关 6 台、应用 20 台、缓存 3 分片，数据库同步写入不成立，写入上限 2000 TPS；单 SKU、库存 5000 件、预约 30 万人、整点开抢，日常下单 200 QPS、P99 60 毫秒，峰值按 2 万 QPS（约 100 倍）估，验收目标是 2 万 QPS 下 P99 低于 200 毫秒、P999 低于 1 秒、错误率低于 0.1%。链路是下单、锁库存、支付、发货。活动页不产生订单，却把读压到另一个量级：30 万人整点前后反复刷新。</p>
+<p>「已抢到 X 件」不用单独维护。库存扣减留在缓存里，已抢件数直接由 5000 减去剩余库存得出，再存一份独立计数就得和库存双写、再对账，两边迟早不一致。能从主数据算出来的数字不另存，这是一条判据。「预约 30 万」是全量用户共享的一个数，用缓存里的单个 key 承住，写走消息队列削峰，把短时间里的多次「加一」合并成一次「加 N」，避免热门 key 被写穿；读的时候本地留一份秒级过期的副本，2 万 QPS 的刷新不该每次都打到那一个 key 上。预约数要准，不能像未读数那样近似，用户对少算一个预约比对多一条红点敏感得多。</p>
+<p>活动动态是「少数发布者、30 万读者」的形态：官方账号在开抢前后发开抢提醒、售罄通知、名单公示，一共几条。用推，一条动态要往 30 万个收件箱各写一份，几条就是百万级写入，而 30 万人里大部分不会点开，推了也白推。用拉，只写官方发件箱，读者刷新时聚合的关注数 C 只有 1 到 3，归并成本几乎为零。这里的判断很直接：发布者少、读者海量、关注数极小，拉模式几乎免费，推模式反而是 30 万倍写放大。代价是 30 万人同时刷新时缓存带宽成为瓶颈，用热数据缓存加副本来摊，别把发件箱历史全量搬出来。</p>
+<pre class="mermaid">
+flowchart LR
+    OP[&quot;运营发布 1 条动态&quot;] --&gt; J{&quot;按粉丝量 F 判定&quot;}
+    J --&gt;|&quot;F 小于 1 万&quot;| P[&quot;推：写每个粉丝收件箱&quot;]
+    J --&gt;|&quot;1 万 到 50 万&quot;| M[&quot;推拉结合：只推活跃粉丝&quot;]
+    J --&gt;|&quot;F 大于等于 50 万&quot;| L[&quot;拉：只写官方发件箱&quot;]
+    L --&gt; C[&quot;缓存热数据 副本分摊带宽&quot;]
+    C --&gt; R[&quot;30 万人刷新 聚合归并&quot;]
+    S[&quot;预约 30 万 已抢 X 件&quot;] --&gt; T[&quot;共享计数 单次读取&quot;]
+</pre>
+
+<p>混合模式按粉丝量分流，阈值要给得出量级依据，不能是拍出来的整数。缓存单分片按 8 万次写入每秒算，一次发布复制 50 万份要约 6 秒，已经超过活动动态「秒级可见」的要求，所以 50 万是推的上限；低于 1 万，全量推经消息队列削峰后秒级可达，读一次收件箱最快，直接推；中间这一段推全量存储复制偏贵，改成只推活跃粉丝，活跃用户通常只占一两成，写入压到几万，代价是要维护在线状态和一份定长活跃粉丝列表，新转活跃的用户还得异步补发。活动页那个红点也照共享列表来：30 万人只读一份官方动态列表，每人记一个最后看过的 ID，未读数等于这个 ID 之后的条数。给 30 万人逐个加一，按每人 1 毫秒算就是 300 秒，上百并发也要几十秒，而大部分用户根本不点开，这笔账不划算。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>未读数和分流判定各自独立成类，放在 feed 包，别和下单业务混在一起。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/web/ActivityController.java</span><br><span class="line">├── application/ActivityFeedService.java</span><br><span class="line">├── infrastructure/feed/UnreadCounter.java</span><br><span class="line">├── infrastructure/feed/FeedModeRouter.java</span><br><span class="line">├── infrastructure/feed/FeedInboxWriter.java</span><br><span class="line">└── infrastructure/counter/StockCounter.java</span><br></pre></td></tr></table></figure>
+
+<p>共享列表的未读数只维护一个全局总数和每人一个偏移量，发布不遍历用户。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.feed;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.ConcurrentHashMap;</span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.atomic.AtomicLong;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 共享动态列表的未读数：全量用户只读一份总数，每人只存一个偏移量。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">UnreadCounter</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">AtomicLong</span> <span class="variable">total</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">AtomicLong</span>();</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> ConcurrentHashMap&lt;Long, Long&gt; lastSeen = <span class="keyword">new</span> <span class="title class_">ConcurrentHashMap</span>&lt;Long, Long&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 发布一条新动态，只增全局总数，不遍历用户逐个加一。 */</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">publish</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> total.incrementAndGet();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 用户查看后把偏移量推到最新；从未出现过的用户按 0 条未读处理。 */</span></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">markSeen</span><span class="params">(<span class="type">long</span> userId)</span> &#123;</span><br><span class="line">        lastSeen.put(userId, total.get());</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="type">long</span> <span class="title function_">unread</span><span class="params">(<span class="type">long</span> userId)</span> &#123;</span><br><span class="line">        <span class="type">Long</span> <span class="variable">seen</span> <span class="operator">=</span> lastSeen.get(userId);</span><br><span class="line">        <span class="keyword">if</span> (seen == <span class="literal">null</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="number">0L</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">long</span> <span class="variable">left</span> <span class="operator">=</span> total.get() - seen;</span><br><span class="line">        <span class="keyword">return</span> left &gt; <span class="number">0L</span> ? left : <span class="number">0L</span>;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>分流判定只回答「这个发布者走哪条路」，阈值由构造参数传入，方便随压测结果重定。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.feed;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 按粉丝量分流推、推拉结合与拉，阈值来自一次发布的可接受延迟。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">FeedModeRouter</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">enum</span> <span class="title class_">Mode</span> &#123; PUSH, MIXED, PULL &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> pushCeiling;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> pullFloor;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** pushCeiling 取 1 万：低于它全量推经削峰后秒级可达。</span></span><br><span class="line"><span class="comment">     *  pullFloor 取 50 万：单分片 8 万写入每秒，50 万份复制要 6 秒多。 */</span></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">FeedModeRouter</span><span class="params">(<span class="type">long</span> pushCeiling, <span class="type">long</span> pullFloor)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.pushCeiling = pushCeiling;</span><br><span class="line">        <span class="built_in">this</span>.pullFloor = pullFloor;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Mode <span class="title function_">decide</span><span class="params">(<span class="type">long</span> followers)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (followers &lt; pushCeiling) &#123;</span><br><span class="line">            <span class="keyword">return</span> Mode.PUSH;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (followers &gt;= pullFloor) &#123;</span><br><span class="line">            <span class="keyword">return</span> Mode.PULL;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> Mode.MIXED;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>边界要写明。UnreadCounter 用的是进程内 Map，30 万用户的偏移量得放到缓存里，长期不来的用户把偏移量清掉省空间，这和共享列表只留热数据是同一笔账。FeedModeRouter 只做路由决策，真正写收件箱、聚合发件箱是另外两个组件的事；两个阈值绑在单分片写入速率和秒级可见上，缓存能力或粉丝分布变了就得重定，不是常数。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>对大 V 用推模式。</strong> 一条动态复制上千万份，消息队列削峰只是把延迟从几分钟拖到几小时。按粉丝量分流，过了 50 万走拉，别指望加机器救写放大。</li>
+<li><strong>给全量用户逐个加未读数。</strong> 30 万人按每人 1 毫秒算要 300 秒，且大部分不点开。用共享列表加每人偏移量，一次发布只增一个全局数。</li>
+<li><strong>把能由主数据派生的计数另存一份。</strong> 「已抢到 X 件」直接由 5000 减剩余库存得出，再存独立计数就要和库存双写对账，两边迟早不一致。</li>
+<li><strong>拉模式把发件箱历史全量搬出来聚合。</strong> 聚合量和带宽一起爆。按浏览集中在最近几天的特点只缓存热数据，并行批量取，再用副本分摊带宽。</li>
+<li><strong>混合模式的阈值拍脑袋。</strong> 不写清 50 万从哪来，粉丝量涨了还照旧推。阈值要绑在「一次发布可接受延迟乘单分片写入速率」上，压测变了就重定。</li>
+</ol>
+<p>下面这些情况，这套做法可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>内部后台，日活几千、发布者粉丝不过百</td>
+<td>推的写放大可忽略，拉也很快</td>
+<td>单表收发件箱，直接推</td>
+</tr>
+<tr>
+<td>一次性静态活动页，没有动态流</td>
+<td>不存在信息流聚合</td>
+<td>静态化加 CDN</td>
+</tr>
+<tr>
+<td>计数允许小时级延迟的离线报表</td>
+<td>不需要毫秒级读</td>
+<td>离线批处理算一次即可</td>
+</tr>
+<tr>
+<td>关注人数极少、读者量也不大的订阅</td>
+<td>拉聚合成本几乎为零</td>
+<td>直接拉，不上收件箱</td>
+</tr>
+<tr>
+<td>原型验证期，粉丝分布一周一变</td>
+<td>分流阈值很快失效</td>
+<td>只记录数据，不预设阈值</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>项</th>
+<th>结论</th>
+<th>代价 &#x2F; 常见坑</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>推模式</td>
+<td>读一次收件箱，写放大 F 倍</td>
+<td>大 V 推送延迟、存储复制</td>
+</tr>
+<tr>
+<td>拉模式</td>
+<td>只写 1 份，读聚合 C 份</td>
+<td>聚合成本、缓存带宽瓶颈</td>
+</tr>
+<tr>
+<td>成本模型</td>
+<td>比 <code>P × F</code> 与 <code>R × C</code> 谁先到上限</td>
+<td>只算写入，漏掉读放大</td>
+</tr>
+<tr>
+<td>成本拐点</td>
+<td>F 过 50 万推不成立</td>
+<td>把阈值当常数不重定</td>
+</tr>
+<tr>
+<td>混合分流</td>
+<td>小于 1 万推，1 万到 50 万只推活跃，以上拉</td>
+<td>维护在线状态与活跃列表</td>
+</tr>
+<tr>
+<td>共享未读数</td>
+<td>全局总数加每人偏移量</td>
+<td>遍历全量用户逐个加一</td>
+</tr>
+<tr>
+<td>信息流未读数</td>
+<td>发布数减快照数</td>
+<td>关注关系变更导致不准</td>
+</tr>
+<tr>
+<td>派生计数</td>
+<td>由 5000 减剩余库存得出</td>
+<td>另存一份双写不一致</td>
+</tr>
+<tr>
+<td>热数据缓存</td>
+<td>只留最近几天，副本分摊带宽</td>
+<td>缓存全量历史撑爆带宽</td>
+</tr>
+<tr>
+<td>计数精度</td>
+<td>预约数要准，未读数可近似</td>
+<td>一律强一致，成本白付</td>
+</tr>
+</tbody></table>
+<p>分流阈值只有一句合格写法：一次发布允许几秒可见、单分片每秒写多少。填不出这两个数，1 万和 50 万就只是两个好看的整数。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>推和拉没有谁更先进，只有哪笔账更划算：写放大落在发布那一刻，读放大落在每次刷新，比的始终是 <code>P × F</code> 和 <code>R × C</code> 谁先顶到上限。计数、未读数、信息流看着是三套模块，落到存储上都是同一件事——一次写入要被多少人读，这份读成本该由谁付。答案也朴素：先把量级量出来，拐点在哪儿就在哪儿换方案，代价写清楚，用不上的复杂度一样不上。能由主数据算出来的不另存，能被共享的别复制，能近似的不追强一致，剩下的才交给机器。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Martin Kleppmann, <em>Designing Data-Intensive Applications</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/" title="高并发（十二）信息流系统的推拉模式取舍">https://xssdpgy.github.io/2023/07/12/高并发（十二）信息流系统的推拉模式取舍/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%95%B0%E6%8D%AE%E6%9E%B6%E6%9E%84/" rel="tag"># 数据架构</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/07/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E9%99%8D%E7%BA%A7%E7%86%94%E6%96%AD%E4%B8%8E%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6/" rel="prev" title="高并发（十一）降级熔断与流量控制">
+      <i class="fa fa-chevron-left"></i> 高并发（十一）降级熔断与流量控制
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '4fabba4aaa305c1378a393a79382f4f9',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

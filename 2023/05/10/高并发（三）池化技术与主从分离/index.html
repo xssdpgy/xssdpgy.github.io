@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言连接池开多大要按「并发数 × 单请求占用时长」推，不是越大越好；主从分离换来的是读能力，代价是复制延迟和读到旧数据，哪些读必须走主库得事先列清。比如商品详情页在开抢前被反复刷新，读请求是下单的几十倍；同一时刻有人下单成功立刻点进订单列表，页面却提示订单不存在，问题往往不在代码逻辑，在从库还没追上主库那几十毫秒。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（三）池化技术与主从分离">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/05/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%89%EF%BC%89%E6%B1%A0%E5%8C%96%E6%8A%80%E6%9C%AF%E4%B8%8E%E4%B8%BB%E4%BB%8E%E5%88%86%E7%A6%BB/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言连接池开多大要按「并发数 × 单请求占用时长」推，不是越大越好；主从分离换来的是读能力，代价是复制延迟和读到旧数据，哪些读必须走主库得事先列清。比如商品详情页在开抢前被反复刷新，读请求是下单的几十倍；同一时刻有人下单成功立刻点进订单列表，页面却提示订单不存在，问题往往不在代码逻辑，在从库还没追上主库那几十毫秒。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-05-10T15:36:44.000Z">
+<meta property="article:modified_time" content="2023-05-10T15:36:44.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="数据架构">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/05/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%89%EF%BC%89%E6%B1%A0%E5%8C%96%E6%8A%80%E6%9C%AF%E4%B8%8E%E4%B8%BB%E4%BB%8E%E5%88%86%E7%A6%BB/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（三）池化技术与主从分离 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/05/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%89%EF%BC%89%E6%B1%A0%E5%8C%96%E6%8A%80%E6%9C%AF%E4%B8%8E%E4%B8%BB%E4%BB%8E%E5%88%86%E7%A6%BB/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（三）池化技术与主从分离
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-05-10 23:36:44" itemprop="dateCreated datePublished" datetime="2023-05-10T23:36:44+08:00">2023-05-10</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.9k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>连接池开多大要按「并发数 × 单请求占用时长」推，不是越大越好；主从分离换来的是读能力，代价是复制延迟和读到旧数据，哪些读必须走主库得事先列清。比如商品详情页在开抢前被反复刷新，读请求是下单的几十倍；同一时刻有人下单成功立刻点进订单列表，页面却提示订单不存在，问题往往不在代码逻辑，在从库还没追上主库那几十毫秒。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>一次数据库查询里，建立连接常常比执行 SQL 还贵。连接要先完成 TCP 三次握手，再做一次密码校验，这几毫秒走完，SQL 本身可能只要一毫秒。请求量低时这点开销看不出来，每秒几千次查询时，大部分时间都花在反复建连和关连上。池化就是预先建好一批连接放在池里复用，用空间换时间，把建连成本摊薄到几乎为零。代价也直接：池子占内存，启动时要预热，否则刚重启的一批请求都在等建连；长期空闲的连接可能被数据库单方面关掉，取出时已是死连接，所以还要探活——定期发一条轻量校验，或取出前验一次，把坏连接剔除重建。</p>
+<p>池子有两个关键数：最小连接数决定平时常驻多少条，最大连接数决定上限。连接不够时请求排队等，超过等待时间就报错，而不是无限建连接。最大连接数不是越大越好——连接最终都压到数据库上，开得越多，数据库要维护的会话和线程越多，锁竞争与上下文切换反而把吞吐拖下来。线程池同理，Web 请求多在等数据库和缓存这类 IO，适当多开线程能提吞吐，但队列必须有界；无界队列让任务无限堆积，堆到内存吃满就是频繁 Full GC 甚至不可用。</p>
+<pre class="mermaid">
+flowchart TB
+    APP[&quot;应用层：20 台&quot;] --&gt; POOL[&quot;连接池：按 并发 × 占用时长 定大小&quot;]
+    POOL --&gt; ROUTE{&quot;读 &#x2F; 写 路由&quot;}
+    ROUTE --&gt;|写请求| MASTER[&quot;主库：下单写入&quot;]
+    ROUTE --&gt;|读请求| SLAVE1[&quot;从库 1：商品详情&quot;]
+    ROUTE --&gt;|读请求| SLAVE2[&quot;从库 2：列表 &#x2F; 详情&quot;]
+    MASTER --&gt;|异步复制| SLAVE1
+    MASTER --&gt;|异步复制| SLAVE2
+    MASTER -.-&gt; LAG[&quot;监控：复制延迟毫秒级&quot;]
+    ROUTE -.-&gt;|写后立刻读| FORCE[&quot;强制走主库&quot;]
+</pre>
+
+<p>主从分离是把读流量从主库挪走。主库负责写，数据通过复制同步到若干从库，从库承担查询。读多写少的系统里两者差着几个数量级，一主多从能把读能力横向拉开。复制是异步的，主库写完就返回，不等从库追上，于是从库会落后一小段时间；主库上每多挂一个从库，就要多一份复制线程和网络开销，所以从库数量有上限，一般挂三到五个就到头了。写入不等复制完成，换来的是写性能，换来的是从库上「稍早的主库」这份语义，强一致在这里不成立。</p>
+<p>延迟最直接的影响是写后立刻读读不到。写入落主库，查询走从库，中间隔着一个复制间隔，结果就是刚下的单查不到。这不是偶发 Bug，是主从分离必须先接受的语义，因此要不要走主库得按查询逐个定，不能等出事再补。访问方式上，嵌入式数据源代理和独立部署的代理层都能把多数据源藏起来，让业务代码像用单库一样写；前者少一跳、但和语言绑死、升级要跟着应用走，后者多一次网络转发、维护升级独立，选哪个看团队运维能力，别只看性能差那一跳。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把连接数算一遍。峰值 2 万 QPS 是日常下单 200 QPS 的 100 倍，分摊到 20 台应用，每台约 1000 QPS，验收目标「2 万 QPS 下 P99 &lt; 200ms、P999 &lt; 1s、错误率 &lt; 0.1%」。设一次下单里数据库相关的串行占用约 5 毫秒（一次库存预检加一次订单写入排队），按「并发数 × 单请求占用时长」推，2 万 QPS 下同时被占住的连接数约为 20000 × 0.005 &#x3D; 100 条。这 100 条是整条链路的并发占用，摊到 20 台应用，每台只要 5 条左右就够跑满峰值。</p>
+<p>于是每台应用把最大连接数设到 10 到 15 已经留了余量，20 台合起来 200 到 300 条，落在一个主库加几个从库能承受的连接上限之内。若照「越大越稳」把单机开到 100，20 台就是 2000 条连接压向数据库，会话和线程开销先吃掉资源，慢请求变多，单请求占用时长被拉长，需要的同时连接数跟着上升，形成正反馈，P99 从 60ms 抬到几百毫秒，离验收线越来越远。连接数该由占用时长反推，不是拍一个吉祥数。</p>
+<table>
+<thead>
+<tr>
+<th>量</th>
+<th>取值</th>
+<th>来源</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>峰值 QPS</td>
+<td>2 万（日常 200 的 100 倍）</td>
+<td>已定容量结论</td>
+</tr>
+<tr>
+<td>应用台数</td>
+<td>20</td>
+<td>已定容量结论</td>
+</tr>
+<tr>
+<td>单机 QPS</td>
+<td>约 1000</td>
+<td>2 万 &#x2F; 20</td>
+</tr>
+<tr>
+<td>单请求 DB 占用</td>
+<td>约 5ms</td>
+<td>一次预检 + 一次写入排队</td>
+</tr>
+<tr>
+<td>链路并发连接占用</td>
+<td>20000 × 0.005 &#x3D; 100</td>
+<td>并发数 × 占用时长</td>
+</tr>
+<tr>
+<td>单机所需连接</td>
+<td>约 5</td>
+<td>100 &#x2F; 20</td>
+</tr>
+<tr>
+<td>单机最大连接建议</td>
+<td>10–15</td>
+<td>留余量，不放大</td>
+</tr>
+<tr>
+<td>全链路连接总量</td>
+<td>200–300</td>
+<td>20 台 × 10–15</td>
+</tr>
+</tbody></table>
+<p>商品详情是另一侧的账。单 SKU、库存 5000 件、预约 30 万人、整点开抢，开抢前详情页被反复刷新，读请求远大于下单写，读放大可能到几十倍。这部分读流量不该压在主库，落到从库、再前置一层缓存，主从分离解决的就是这层读放大。链路下单 → 锁库存 → 支付 → 发货里，真正写主库的只有下单和支付状态变更，其余大多是查。</p>
+<pre class="mermaid">
+flowchart LR
+    W[&quot;下单写入主库&quot;] --&gt; Q[&quot;用户立刻查订单&quot;]
+    Q --&gt; CHK{&quot;写会话内 &#x2F; 延迟超阈值?&quot;}
+    CHK --&gt;|是| M[&quot;读主库：拿到刚写入的订单&quot;]
+    CHK --&gt;|否| S[&quot;读从库：历史查询 &#x2F; 商品详情&quot;]
+    R[&quot;复制延迟监控&quot;] -.-&gt; CHK
+</pre>
+
+<p>麻烦出在下单后立刻查订单。用户下单成功，订单写在主库，紧跟着的详情查询若被路由到从库，复制延迟几十到几百毫秒就足以让页面查不到，看到的是「订单不存在」，用户重试又可能撞上第二次扣减。这类查询必须在设计阶段就列进强制走主库清单：写请求所在会话内的读、支付回调后的状态查询、以及任何依赖刚写入结果的判断。清单之外的历史查询、商品详情、列表页才交给从库。另一条兜底是按复制延迟动态决定，延迟超过阈值就把这段时间内的读切到主库，等追上再放回去。主库读要限量并登记，一旦谁都来走一次主库，扩展读流量的初衷就没了。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>路由判断放在数据访问层，和数据源配置收在一处，业务代码不该自己挑主库还是从库：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/</span><br><span class="line">│   └── web/OrderController.java</span><br><span class="line">├── application/</span><br><span class="line">│   └── OrderQueryService.java</span><br><span class="line">├── infrastructure/</span><br><span class="line">│   ├── datasource/ReadRouteResolver.java</span><br><span class="line">│   ├── datasource/WriteSessionContext.java</span><br><span class="line">│   ├── datasource/RoutingDataSource.java</span><br><span class="line">│   └── config/DataSourceConfig.java</span><br><span class="line">└── resources/</span><br><span class="line">    └── application.yml</span><br></pre></td></tr></table></figure>
+
+<p>下面这段读路由把三类读强制打到主库：写会话内、白名单查询、复制延迟超阈值，其余走从库。复制延迟由外部指标提供，路由只消费一个毫秒数，不把探测逻辑混进来：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.datasource;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.Arrays;</span><br><span class="line"><span class="keyword">import</span> java.util.Collections;</span><br><span class="line"><span class="keyword">import</span> java.util.HashSet;</span><br><span class="line"><span class="keyword">import</span> java.util.Set;</span><br><span class="line"></span><br><span class="line"><span class="comment">/**</span></span><br><span class="line"><span class="comment"> * 主从读路由：写会话内、白名单查询、复制延迟超阈值，三类读强制走主库，其余走从库。</span></span><br><span class="line"><span class="comment"> * 复制延迟由外部指标提供，避免把缓存或队列的探测逻辑混进路由判断。</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">ReadRouteResolver</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">MASTER</span> <span class="operator">=</span> <span class="string">&quot;master&quot;</span>;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">final</span> <span class="type">String</span> <span class="variable">SLAVE</span> <span class="operator">=</span> <span class="string">&quot;slave&quot;</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">LagProvider</span> &#123;</span><br><span class="line">        <span class="type">long</span> <span class="title function_">currentLagMs</span><span class="params">()</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> Set&lt;String&gt; mustMaster;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> LagProvider lagProvider;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> maxLagMs;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">ReadRouteResolver</span><span class="params">(LagProvider lagProvider, <span class="type">long</span> maxLagMs, String... masterKeys)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.lagProvider = lagProvider;</span><br><span class="line">        <span class="built_in">this</span>.maxLagMs = maxLagMs;</span><br><span class="line">        Set&lt;String&gt; keys = <span class="keyword">new</span> <span class="title class_">HashSet</span>&lt;String&gt;(Arrays.asList(masterKeys));</span><br><span class="line">        <span class="built_in">this</span>.mustMaster = Collections.unmodifiableSet(keys);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> String <span class="title function_">resolve</span><span class="params">(String queryKey, <span class="type">boolean</span> inWriteSession)</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (inWriteSession) &#123;</span><br><span class="line">            <span class="keyword">return</span> MASTER;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (mustMaster.contains(queryKey)) &#123;</span><br><span class="line">            <span class="keyword">return</span> MASTER;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (lagProvider.currentLagMs() &gt; maxLagMs) &#123;</span><br><span class="line">            <span class="keyword">return</span> MASTER;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> SLAVE;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>写会话标记用 ThreadLocal 挂在请求线程上，下单写入后置位，查询据此判断：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.datasource;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 下单会话标记：写入之后同一线程内的读请求据此强制走主库，请求结束必须清理。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">WriteSessionContext</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">static</span> <span class="keyword">final</span> ThreadLocal&lt;Boolean&gt; FLAG = <span class="keyword">new</span> <span class="title class_">ThreadLocal</span>&lt;Boolean&gt;();</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="title function_">WriteSessionContext</span><span class="params">()</span> &#123;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">markWritten</span><span class="params">()</span> &#123;</span><br><span class="line">        FLAG.set(Boolean.TRUE);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="type">boolean</span> <span class="title function_">inWriteSession</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> Boolean.TRUE.equals(FLAG.get());</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">static</span> <span class="keyword">void</span> <span class="title function_">clear</span><span class="params">()</span> &#123;</span><br><span class="line">        FLAG.remove();</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这套写法有个必须守住的边界：请求结束时一定要 clear，否则线程被容器复用，标记会带到下一个用户的读请求上，读全被赶到主库，从库形同虚设。复制延迟的探测别塞进路由逻辑，它由监控侧提供，路由只消费一个毫秒数。还有一条硬约束：强制走主库的查询要限量并登记，白名单越加越长，说明业务里写后立刻读太多，该回头改交互——比如把订单信息随下单响应一次带回，而不是无限扩主库读接口。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>连接池按越大越稳拍数。</strong> 单机开到几十上百，数据库连接被打满，会话和线程开销先吃掉资源，P99 反而比小池子更差。</li>
+<li><strong>用无界队列承接数据库或线程任务。</strong> 任务无限堆积，堆到内存吃满才暴露，故障时已经是频繁 Full GC，不是慢一点的问题。</li>
+<li><strong>主从分离后所有读一律走从库。</strong> 写后立刻读的场景没单列，用户下单成功却查不到订单，客服工单比监控先到。</li>
+<li><strong>把查主库做成随手可用的通用接口。</strong> 团队里谁都能调，主库被读流量压垮，读写分离白做，还多了一份复制延迟。</li>
+<li><strong>复制延迟不监控。</strong> 等用户投诉才排查，秒级落后本该早告警；正常延迟在毫秒级，到秒级就该处理。</li>
+</ol>
+<p>下面这张表回答什么情况不必这么做，这些情形下池化调优与主从分离可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>读写都落单库、峰值远低于单机上限</td>
+<td>池化收益有限，主从还平添一份复制延迟</td>
+<td>小连接池 + 单库 + 基础监控</td>
+</tr>
+<tr>
+<td>强一致的资金账本、清算</td>
+<td>读到旧数据不可接受，复制延迟没有容忍空间</td>
+<td>读写都走主库，副本只做备份</td>
+</tr>
+<tr>
+<td>数据基本静态、读多写极少</td>
+<td>缓存或 CDN 就能挡住读放大</td>
+<td>静态化加缓存，不扩从库</td>
+</tr>
+<tr>
+<td>低流量内部系统</td>
+<td>从库与中间件的运维成本超过收益</td>
+<td>单库，写好超时即可</td>
+</tr>
+<tr>
+<td>写入后不立刻读的异步流程</td>
+<td>延迟窗口内没有读，复制延迟不伤业务</td>
+<td>消息里带齐数据，别回查从库</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>判断点</th>
+<th>结论</th>
+<th>常见坑</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>连接池上限</td>
+<td>并发数 × 单请求占用时长，再留余量</td>
+<td>拍数、越大越好</td>
+</tr>
+<tr>
+<td>连接探活</td>
+<td>预热 + 定期校验，剔除死连接</td>
+<td>取出的连接已被数据库关闭</td>
+</tr>
+<tr>
+<td>队列</td>
+<td>必须有界</td>
+<td>无界堆积触发 Full GC</td>
+</tr>
+<tr>
+<td>主从收益</td>
+<td>分摊读放大，读可横向扩</td>
+<td>拿它去解决写瓶颈</td>
+</tr>
+<tr>
+<td>主从代价</td>
+<td>异步复制延迟、读到旧数据</td>
+<td>误以为读写分离是强一致</td>
+</tr>
+<tr>
+<td>强制走主库</td>
+<td>写会话内、白名单、延迟超阈值</td>
+<td>白名单无限膨胀</td>
+</tr>
+<tr>
+<td>从库数量</td>
+<td>受主库复制线程与带宽限制，三到五个到头</td>
+<td>无限加从库</td>
+</tr>
+<tr>
+<td>复制延迟</td>
+<td>毫秒级正常，秒级告警</td>
+<td>不进监控大盘</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>池化和主从分离处理的是两种不对等：连接和线程创建贵，池子把它摊薄；读远多于写，就把读挪到从库。两个判断都带代价——池子开大了压数据库，从库加上了复制延迟。把连接数怎么算、哪些读必须走主库这两件事在设计阶段写死，比上线后靠调参和补白名单省事得多。复制延迟该进监控大盘，写后立刻读的清单该进设计文档，这两处定下来，主从分离才只是加机器的事，不至于变成一连串诡异的查不到数据。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Baron Schwartz et al., <em>High Performance MySQL</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/05/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%89%EF%BC%89%E6%B1%A0%E5%8C%96%E6%8A%80%E6%9C%AF%E4%B8%8E%E4%B8%BB%E4%BB%8E%E5%88%86%E7%A6%BB/" title="高并发（三）池化技术与主从分离">https://xssdpgy.github.io/2023/05/10/高并发（三）池化技术与主从分离/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E6%95%B0%E6%8D%AE%E6%9E%B6%E6%9E%84/" rel="tag"># 数据架构</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/04/28/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%8C%EF%BC%89%E6%9E%B6%E6%9E%84%E5%88%86%E5%B1%82%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E6%98%93%E6%89%A9%E5%B1%95%E8%AE%BE%E8%AE%A1/" rel="prev" title="高并发（二）架构分层与高可用、易扩展设计">
+      <i class="fa fa-chevron-left"></i> 高并发（二）架构分层与高可用、易扩展设计
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/05/17/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%9B%9B%EF%BC%89%E5%88%86%E5%BA%93%E5%88%86%E8%A1%A8%E4%B8%8E%E5%85%A8%E5%B1%80%E5%94%AF%E4%B8%80%20ID/" rel="next" title="高并发（四）分库分表与全局唯一 ID">
+      高并发（四）分库分表与全局唯一 ID <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '0de889c10a4f87576e7bac913e591759',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

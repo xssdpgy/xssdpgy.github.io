@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言分层的目的是隔离变更和故障，不是照着模板搭三层目录。高可用要靠冗余、故障发现、切换三件事凑齐，光堆副本不产生可用性；易扩展靠无状态和可水平拆分，有状态那部分才是难点。比如整点开抢的下单链路，网关、应用、缓存都按峰值扩了机器，某台应用进程崩了仍有请求被打过去，错误率抬起来，缺的不是机器数，是摘除和切换的判断。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（二）架构分层与高可用、易扩展设计">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/04/28/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%8C%EF%BC%89%E6%9E%B6%E6%9E%84%E5%88%86%E5%B1%82%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E6%98%93%E6%89%A9%E5%B1%95%E8%AE%BE%E8%AE%A1/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言分层的目的是隔离变更和故障，不是照着模板搭三层目录。高可用要靠冗余、故障发现、切换三件事凑齐，光堆副本不产生可用性；易扩展靠无状态和可水平拆分，有状态那部分才是难点。比如整点开抢的下单链路，网关、应用、缓存都按峰值扩了机器，某台应用进程崩了仍有请求被打过去，错误率抬起来，缺的不是机器数，是摘除和切换的判断。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-04-28T15:49:24.000Z">
+<meta property="article:modified_time" content="2023-04-28T15:49:24.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="容量设计">
+<meta property="article:tag" content="稳定性">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/04/28/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%8C%EF%BC%89%E6%9E%B6%E6%9E%84%E5%88%86%E5%B1%82%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E6%98%93%E6%89%A9%E5%B1%95%E8%AE%BE%E8%AE%A1/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（二）架构分层与高可用、易扩展设计 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/04/28/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%8C%EF%BC%89%E6%9E%B6%E6%9E%84%E5%88%86%E5%B1%82%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E6%98%93%E6%89%A9%E5%B1%95%E8%AE%BE%E8%AE%A1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（二）架构分层与高可用、易扩展设计
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-04-28 23:49:24" itemprop="dateCreated datePublished" datetime="2023-04-28T23:49:24+08:00">2023-04-28</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.3k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>分层的目的是隔离变更和故障，不是照着模板搭三层目录。高可用要靠冗余、故障发现、切换三件事凑齐，光堆副本不产生可用性；易扩展靠无状态和可水平拆分，有状态那部分才是难点。比如整点开抢的下单链路，网关、应用、缓存都按峰值扩了机器，某台应用进程崩了仍有请求被打过去，错误率抬起来，缺的不是机器数，是摘除和切换的判断。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>分层是把系统按职责切成若干层，相邻层之间才允许依赖和数据流转，跨层直接访问会让边界失效。一个常见误区是把分层等同于目录规范：建了 web、service、dao 三个包就算分层了。真正的边界在于改动是否只落在一层——数据库地址变了只该改数据访问层，如果表现层也能直接读写库，这个改动就得散到多处，层数再多也挡不住变化扩散。业务复杂到一定量级，表现层容易顺手把「查用户、没有就创建」这类编排逻辑揽过去，边界就此糊掉；把通用能力下沉成单独一层，提供原子接口，由业务层负责编排，边界才拉得回来。</p>
+<p>分层有代价。每层独立部署后，一次请求要多走几次网络，也就是多一跳；多一个中间层，调试时就要多追一段调用链，改一个小需求也可能要动好几层的透传代码。收益要能覆盖这两份成本才值得做：要么改动被隔离在单层，要么某一层能单独扩容。只做数据透传、不带任何判断的层，留着就是负担，不如删掉。</p>
+<pre class="mermaid">
+flowchart TB
+    subgraph before[&quot;改造前：耦合单体&quot;]
+        direction TB
+        U1[&quot;端侧请求&quot;] --&gt; M1[&quot;单体应用：校验 &#x2F; 编排 &#x2F; 读写库混在一起&quot;]
+        M1 --&gt; D1[&quot;单库&quot;]
+    end
+    subgraph after[&quot;改造后：按职责分层&quot;]
+        direction TB
+        U2[&quot;终端显示 &#x2F; 开放接口&quot;] --&gt; G[&quot;网关层：鉴权 &#x2F; 限流 &#x2F; 转发&quot;]
+        G --&gt; S[&quot;应用层：下单编排&quot;]
+        S --&gt; M2[&quot;通用能力层：缓存策略 &#x2F; 第三方封装&quot;]
+        M2 --&gt; DAO[&quot;数据访问层&quot;]
+        DAO --&gt; C[&quot;缓存 3 分片&quot;]
+        DAO --&gt; DB[&quot;数据库：写入排队&quot;]
+    end
+</pre>
+
+<p>高可用不等于机器多。可用性用 MTBF 和 MTTR 度量，写成比例是 MTBF &#x2F;（MTBF + MTTR），几个九描述的就是这个比例。三个九的年故障时间约 8 小时，四个九压到 1 小时以内，到这一步靠人盯报警已经做不到，得让机器自己完成发现和切换。冗余只是备好了候选节点，故障发现决定什么时候知道坏了，切换决定流量去哪儿，缺任何一件，副本都只是闲置成本。对等节点之间切换最简单，任意一个都能顶上；带主备之分的节点要先检测、再选主，结果还得在多个备节点之间达成一致，复杂度高一个量级。</p>
+<p>易扩展的分界线同样落在状态上。无状态服务加机器就能线性分担流量，存储这类有状态的部分加减节点要搬数据、要重分布，才是扩展真正的瓶颈。所以判断一套结构能不能扩，不是问加了几台机器，是问加完之后流量有没有被线性接走，以及有状态那层有没有跟着一起成为新瓶颈。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>把已经定下的容量配置摆进分层结构：网关 6 台、应用 20 台、缓存 3 分片，数据库同步写入不成立。设定仍是单 SKU、库存 5000 件、预约 30 万人、整点开抢，峰值 2 万 QPS 是日常下单 200 QPS 的 100 倍，验收目标「2 万 QPS 下 P99 &lt; 200ms、P999 &lt; 1s、错误率 &lt; 0.1%」，链路为下单 → 锁库存 → 支付 → 发货。</p>
+<p>按层看谁能扩。网关做的是鉴权和限流，本身不存请求状态，6 台完全对等，任何一台挂了，负载均衡把流量分给其余 5 台即可，扩容就是加机器。应用 20 台同理，前提是会话、库存预检结果这些状态全部外置到缓存，别落在进程内存里；一旦有人把「已抢到的标记」写进本地 Map，这台机器立刻变成有状态节点，扩容和切换同时失效。缓存 3 分片是有状态的，分片规则和热点 key 的分布绑在一起，加分片要迁数据、重算路由，不能像应用那样随手加。数据库那一层同步写入扛不住 2 万 TPS，写入得丢进消息队列按库能承受的速率排队，这层既不能简单水平扩，也是整条链路的瓶颈落点。</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>有无状态</th>
+<th>扩展方式</th>
+<th>单机故障切换路径</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>网关</td>
+<td>无状态</td>
+<td>加机器 + 负载均衡</td>
+<td>摘除节点，流量分给其余对等节点</td>
+<td>近乎为零</td>
+</tr>
+<tr>
+<td>应用</td>
+<td>无状态（状态外置）</td>
+<td>加机器</td>
+<td>摘除节点，会话由缓存续上</td>
+<td>必须保证本地不存状态</td>
+</tr>
+<tr>
+<td>缓存</td>
+<td>有状态（分片）</td>
+<td>加分片 + 数据迁移</td>
+<td>主备切换 &#x2F; 分片重定向</td>
+<td>迁移成本、热点重分布</td>
+</tr>
+<tr>
+<td>数据库</td>
+<td>有状态</td>
+<td>先垂直后水平拆分</td>
+<td>主备切换、选主</td>
+<td>复制延迟、跨片聚合</td>
+</tr>
+</tbody></table>
+<p>扩展方式落到每一层都不一样，这张表比一句「都做成无状态」有用：前三行里只有网关和应用能靠加机器解决，后两行都要先处理数据和一致性。</p>
+<pre class="mermaid">
+flowchart LR
+    HB[&quot;心跳 &#x2F; 健康检查&quot;] --&gt;|超时未响应| DET[&quot;判定节点故障&quot;]
+    DET --&gt; RM[&quot;从可用列表摘除&quot;]
+    RM --&gt; R1{&quot;节点是否对等&quot;}
+    R1 --&gt;|对等：网关 &#x2F; 应用| RR[&quot;负载均衡把流量分给其余节点&quot;]
+    R1 --&gt;|主备：缓存 &#x2F; 数据库| EL[&quot;备节点选主并达成一致&quot;]
+    EL --&gt; SW[&quot;切主 + 更新路由&quot;]
+</pre>
+
+<p>切换路径要能自动跑完才算高可用。心跳或健康检查发现超时，先把节点从可用列表摘掉；对等节点直接把流量分给其余机器，带主备的层要先选主、达成一致，再更新路由。四个九的目标下这一串必须由机器完成，等人登录服务器处理，十分钟早就超出预算。超时控制也得跟上：下游一次慢调用若按几十秒的超时等待，调用方线程被长期占住，一个慢点就拖垮整片应用；把超时压到 P99 量级、留出重试，才能把损失限制在少量请求。这是取舍，不是无损：被超时砍掉的那部分请求对用户是有损的，换的是整体不雪崩。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>分层先落在目录上，再落到依赖规则上。下面这套目录把通用能力和数据访问收进 infrastructure，业务编排留在 application，避免表现层越过边界直接碰库：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/</span><br><span class="line">│   └── web/SeckillController.java</span><br><span class="line">├── application/</span><br><span class="line">│   ├── SeckillAppService.java</span><br><span class="line">│   └── failover/PeerRouter.java</span><br><span class="line">├── domain/</span><br><span class="line">│   └── inventory/StockChecker.java</span><br><span class="line">├── infrastructure/</span><br><span class="line">│   ├── cache/StockCache.java</span><br><span class="line">│   ├── mq/OrderProducer.java</span><br><span class="line">│   ├── persistence/OrderMapper.java</span><br><span class="line">│   └── failover/HealthTracker.java</span><br><span class="line">└── config/LayerConfig.java</span><br></pre></td></tr></table></figure>
+
+<p>对等的网关层和应用层，故障切换就是摘除加重路由。下面这段对等节点路由器用连续失败计数临时摘除节点，恢复窗口到了再放回来，只处理无状态节点：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.application.failover;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.ArrayList;</span><br><span class="line"><span class="keyword">import</span> java.util.Collections;</span><br><span class="line"><span class="keyword">import</span> java.util.List;</span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.CopyOnWriteArrayList;</span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.atomic.AtomicInteger;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 对等节点的摘除与重路由：连续失败达到阈值即临时摘除，流量分给其余节点。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">PeerRouter</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> List&lt;String&gt; peers;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> CopyOnWriteArrayList&lt;String&gt; available;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">AtomicInteger</span> <span class="variable">cursor</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">AtomicInteger</span>();</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> List&lt;Integer&gt; failCounts;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> List&lt;Long&gt; downSince;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">int</span> failThreshold;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> recoverAfterMs;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">PeerRouter</span><span class="params">(List&lt;String&gt; peers, <span class="type">int</span> failThreshold, <span class="type">long</span> recoverAfterMs)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.peers = <span class="keyword">new</span> <span class="title class_">ArrayList</span>&lt;String&gt;(peers);</span><br><span class="line">        <span class="built_in">this</span>.failThreshold = failThreshold;</span><br><span class="line">        <span class="built_in">this</span>.recoverAfterMs = recoverAfterMs;</span><br><span class="line">        <span class="built_in">this</span>.available = <span class="keyword">new</span> <span class="title class_">CopyOnWriteArrayList</span>&lt;String&gt;(peers);</span><br><span class="line">        <span class="built_in">this</span>.failCounts = <span class="keyword">new</span> <span class="title class_">ArrayList</span>&lt;Integer&gt;(Collections.nCopies(peers.size(), <span class="number">0</span>));</span><br><span class="line">        <span class="built_in">this</span>.downSince = <span class="keyword">new</span> <span class="title class_">ArrayList</span>&lt;Long&gt;(Collections.nCopies(peers.size(), <span class="number">0L</span>));</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> String <span class="title function_">pick</span><span class="params">()</span> &#123;</span><br><span class="line">        reviveIfDue();</span><br><span class="line">        String[] live = available.toArray(<span class="keyword">new</span> <span class="title class_">String</span>[<span class="number">0</span>]);</span><br><span class="line">        <span class="keyword">if</span> (live.length == <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">throw</span> <span class="keyword">new</span> <span class="title class_">IllegalStateException</span>(<span class="string">&quot;no available peer&quot;</span>);</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">int</span> <span class="variable">idx</span> <span class="operator">=</span> Math.floorMod(cursor.getAndIncrement(), live.length);</span><br><span class="line">        <span class="keyword">return</span> live[idx];</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">reportSuccess</span><span class="params">(String peer)</span> &#123;</span><br><span class="line">        <span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> peers.indexOf(peer);</span><br><span class="line">        <span class="keyword">if</span> (i &gt;= <span class="number">0</span>) &#123;</span><br><span class="line">            failCounts.set(i, <span class="number">0</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">reportFailure</span><span class="params">(String peer)</span> &#123;</span><br><span class="line">        <span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> peers.indexOf(peer);</span><br><span class="line">        <span class="keyword">if</span> (i &lt; <span class="number">0</span>) &#123;</span><br><span class="line">            <span class="keyword">return</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">int</span> <span class="variable">fails</span> <span class="operator">=</span> failCounts.get(i) + <span class="number">1</span>;</span><br><span class="line">        failCounts.set(i, fails);</span><br><span class="line">        <span class="keyword">if</span> (fails &gt;= failThreshold &amp;&amp; available.contains(peer)) &#123;</span><br><span class="line">            available.remove(peer);</span><br><span class="line">            downSince.set(i, System.currentTimeMillis());</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">reviveIfDue</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="type">long</span> <span class="variable">now</span> <span class="operator">=</span> System.currentTimeMillis();</span><br><span class="line">        <span class="keyword">for</span> (<span class="type">int</span> <span class="variable">i</span> <span class="operator">=</span> <span class="number">0</span>; i &lt; peers.size(); i++) &#123;</span><br><span class="line">            <span class="type">String</span> <span class="variable">peer</span> <span class="operator">=</span> peers.get(i);</span><br><span class="line">            <span class="keyword">if</span> (!available.contains(peer) &amp;&amp; now - downSince.get(i) &gt;= recoverAfterMs) &#123;</span><br><span class="line">                available.add(peer);</span><br><span class="line">                failCounts.set(i, <span class="number">0</span>);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>这份路由有明确边界：它只覆盖对等节点，主备层的选主和一致性不在这里，那段逻辑要单独做。摘除靠连续失败计数，阈值和探测间隔得按 P99 调，太敏感会把一次网络抖动误判成故障、来回切，太迟钝又起不到隔离作用；恢复窗口到了先放少量流量试探，别一上来全量切回。故障发现、摘除、恢复三件事凑齐，冗余才算转成可用性。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>把分层做成目录模板。</strong> 包建齐了，表现层仍旧直接读写库，或者把业务编排散在多个层里，边界形同虚设，改动一来照样到处改。</li>
+<li><strong>只堆冗余不做故障发现和切换。</strong> 副本平时不承载判断，故障时没人切、没人知道坏了，多出来的机器只是成本，不是可用性。</li>
+<li><strong>把有状态服务当无状态扩。</strong> 缓存分片随手加机器却不迁数据，热点没重分布、路由没更新，扩容后读不到旧数据，比不扩还糟。</li>
+<li><strong>把状态写进应用进程。</strong> 会话或库存标记落在本地内存，节点变成有状态，扩容的新机器接不住老请求，故障切换也会丢状态。</li>
+<li><strong>跨层调用不设超时或一律给几十秒。</strong> 慢请求占住调用方线程不放，一处变慢拖垮整片，超时该按 P99 定并留出重试。</li>
+</ol>
+<p>下面这张表回答什么情况不必这么做，这些情形下分层、冗余与切换可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>内部后台、报表系统，峰值远低于单机拐点</td>
+<td>故障影响面小，分层与自动切换的收益抵不过复杂度</td>
+<td>单库单应用 + 基础监控</td>
+</tr>
+<tr>
+<td>一次性静态活动页</td>
+<td>请求在 CDN 被挡完，没有分层扩容的对象</td>
+<td>静态化加 CDN</td>
+</tr>
+<tr>
+<td>MVP 验证期，业务边界一周一变</td>
+<td>层边界还没稳定，先分层等于反复重构</td>
+<td>按模块分文件，不独立部署</td>
+</tr>
+<tr>
+<td>低流量的资金类强事务操作</td>
+<td>首要目标是一致性与可追溯，不是可用性的几个九</td>
+<td>优先正确性，副本只做备份不做自动切换</td>
+</tr>
+<tr>
+<td>只读配置下发类系统</td>
+<td>性能几乎不重要，可用却不能断</td>
+<td>多副本 + 客户端缓存兜底，别按流量模型扩展</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>判断点</th>
+<th>结论</th>
+<th>依据 &#x2F; 代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>分层值不值得做</td>
+<td>看改动能否隔离在单层、某层能否单独扩</td>
+<td>多一跳与调试成本要被覆盖</td>
+</tr>
+<tr>
+<td>高可用的三件事</td>
+<td>冗余 + 故障发现 + 切换，缺一不可</td>
+<td>只堆副本不产生可用性</td>
+</tr>
+<tr>
+<td>对等节点切换</td>
+<td>摘除后把流量分给其余节点</td>
+<td>近乎零成本，前提是节点无状态</td>
+</tr>
+<tr>
+<td>主备节点切换</td>
+<td>先检测、再选主、达成一致、更新路由</td>
+<td>复杂度高一个量级</td>
+</tr>
+<tr>
+<td>易扩展的分界</td>
+<td>无状态可水平扩，有状态才是瓶颈</td>
+<td>存储加减节点要迁数据</td>
+</tr>
+<tr>
+<td>四个九靠什么</td>
+<td>自动发现与切换，不靠人</td>
+<td>人工介入的十分钟就超了预算</td>
+</tr>
+<tr>
+<td>超时阈值</td>
+<td>压到 P99 量级并留重试</td>
+<td>牺牲少量请求换整体不雪崩</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>把这三件事拆开看容易走偏：分层解决的是改动落在哪一层，冗余只是备好可替换的节点，真正决定可用性的是故障能不能被机器发现并自动切走。无状态让替换成本趋近于零，有状态部分则要迁数据、选主、达成一致，扩展的难点全压在这里。判断一套结构是否成立，问三句就够：改动是否收敛在单层、故障是否无需人工介入就能切、加机器是否真能线性分担流量。答不上来，层数堆得再多也只是把目录分得整齐些。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Martin Kleppmann, <em>Designing Data-Intensive Applications</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/04/28/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%8C%EF%BC%89%E6%9E%B6%E6%9E%84%E5%88%86%E5%B1%82%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E6%98%93%E6%89%A9%E5%B1%95%E8%AE%BE%E8%AE%A1/" title="高并发（二）架构分层与高可用、易扩展设计">https://xssdpgy.github.io/2023/04/28/高并发（二）架构分层与高可用、易扩展设计/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E5%AE%B9%E9%87%8F%E8%AE%BE%E8%AE%A1/" rel="tag"># 容量设计</a>
+              <a href="/tags/%E7%A8%B3%E5%AE%9A%E6%80%A7/" rel="tag"># 稳定性</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/04/24/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%80%EF%BC%89%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E7%9B%AE%E6%A0%87%E4%B8%8E%E5%AE%B9%E9%87%8F%E5%BA%A6%E9%87%8F/" rel="prev" title="高并发（一）系统设计目标与容量度量">
+      <i class="fa fa-chevron-left"></i> 高并发（一）系统设计目标与容量度量
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/05/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%89%EF%BC%89%E6%B1%A0%E5%8C%96%E6%8A%80%E6%9C%AF%E4%B8%8E%E4%B8%BB%E4%BB%8E%E5%88%86%E7%A6%BB/" rel="next" title="高并发（三）池化技术与主从分离">
+      高并发（三）池化技术与主从分离 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '0e643b9b229eb41c54acc6e83ff83325',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

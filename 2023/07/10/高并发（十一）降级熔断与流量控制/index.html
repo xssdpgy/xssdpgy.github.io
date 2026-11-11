@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言降级按非核心依赖清单逐项关，别在故障时临时翻代码找哪些能停。熔断保护的是调用方手里的线程，它不会把下游修好，只让调用快速失败、把资源还回来。限流阈值同理，得从压测拐点取，拍出来的数不是误伤就是形同虚设。先看一个常见的场景：2 万 QPS 涌到入口，数据库同步写入只扛得住 2000 TPS，支付回调又从 50 毫秒拖到 2 秒，下单应用的线程池被占满，整条链路跟着不可用。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="高并发（十一）降级熔断与流量控制">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/07/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E9%99%8D%E7%BA%A7%E7%86%94%E6%96%AD%E4%B8%8E%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言降级按非核心依赖清单逐项关，别在故障时临时翻代码找哪些能停。熔断保护的是调用方手里的线程，它不会把下游修好，只让调用快速失败、把资源还回来。限流阈值同理，得从压测拐点取，拍出来的数不是误伤就是形同虚设。先看一个常见的场景：2 万 QPS 涌到入口，数据库同步写入只扛得住 2000 TPS，支付回调又从 50 毫秒拖到 2 秒，下单应用的线程池被占满，整条链路跟着不可用。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-07-10T14:52:26.000Z">
+<meta property="article:modified_time" content="2023-07-10T14:52:26.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="高并发">
+<meta property="article:tag" content="稳定性">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/07/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E9%99%8D%E7%BA%A7%E7%86%94%E6%96%AD%E4%B8%8E%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>高并发（十一）降级熔断与流量控制 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/07/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E9%99%8D%E7%BA%A7%E7%86%94%E6%96%AD%E4%B8%8E%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          高并发（十一）降级熔断与流量控制
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-07-10 22:52:26" itemprop="dateCreated datePublished" datetime="2023-07-10T22:52:26+08:00">2023-07-10</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>7.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>降级按非核心依赖清单逐项关，别在故障时临时翻代码找哪些能停。熔断保护的是调用方手里的线程，它不会把下游修好，只让调用快速失败、把资源还回来。限流阈值同理，得从压测拐点取，拍出来的数不是误伤就是形同虚设。先看一个常见的场景：2 万 QPS 涌到入口，数据库同步写入只扛得住 2000 TPS，支付回调又从 50 毫秒拖到 2 秒，下单应用的线程池被占满，整条链路跟着不可用。</p>
+<span id="more"></span>
+
+<h2 id="概念界定"><a href="#概念界定" class="headerlink" title="概念界定"></a>概念界定</h2><p>三件事常被混着叫，边界其实很清楚。降级是站在整体负载上主动放弃一部分非核心功能，拿体验换核心链路可用，属于有损容错；前提是先有一张「核心 &#x2F; 非核心」清单，只能对非核心动手。常见策略是返回兜底数据、把轮询降频、同步写转异步写，以及用配置中心的开关直接短路一段调用。熔断是调用方为每个下游维护一个三态状态机，失败或超时攒够阈值就打开，后续请求不再发往下游、直接快速失败。限流是在入口限制进入速率，超出的请求当场拒绝。</p>
+<p>雪崩的起点往往不是某个依赖宕机，是它变慢。宕机只让那部分功能不可用，慢会把调用方的线程一只只挂住：B 等 C 返回，线程不释放，B 的线程池被占满，A 再等 B，一层层往上传，最后核心下单链路一起停。所以熔断和降级都是冲着「慢」去的，不是冲着「断」去的。熔断只做一件事——把调用方借出去的线程收回来，下游该慢还是慢，它不修下游。把它当成修复手段，故障会一直留在那儿。</p>
+<pre class="mermaid">
+flowchart LR
+    CLOSED[&quot;关闭：正常调用下游&quot;] --&gt;|&quot;失败或超时累计到阈值&quot;| OPEN[&quot;打开：直接快速失败&quot;]
+    OPEN --&gt;|&quot;冷却计时器超时&quot;| HALF[&quot;半打开：放少量试探&quot;]
+    HALF --&gt;|&quot;试探成功数达标&quot;| CLOSED
+    HALF --&gt;|&quot;任一次试探失败&quot;| OPEN
+</pre>
+
+<p>状态切换的判定要落在具体数字上：关闭态连续失败到阈值进打开；打开态起一个冷却计时器，超时转半打开；半打开只放固定数量的试探，成功数达标回关闭，任一次失败立刻回打开。试探数别设大，否则半打开等于把下游重新压一遍。开关降级还有个硬要求：没在流量低峰演练过的开关不算数，真出事时拨了不生效，比没开关更糟。</p>
+<h2 id="案例推演"><a href="#案例推演" class="headerlink" title="案例推演"></a>案例推演</h2><p>大促秒杀的既定容量是网关 6 台、应用 20 台、缓存 3 分片，数据库同步写入不成立，写入上限 2000 TPS；日常下单 200 QPS、P99 60 毫秒，峰值按 2 万 QPS（约 100 倍）估，验收目标是 2 万 QPS 下 P99 低于 200 毫秒、P999 低于 1 秒、错误率低于 0.1%。链路是下单、锁库存、支付、发货。这一篇要处理的是：30 万人抢 5000 件，超过 98% 的请求注定失败，怎么让它们不把数据库压穿。</p>
+<p>2 万 QPS 到 2000 TPS 的落差，靠入口分两层削。网关先做资格预判和整体限流，把明显无效的请求挡在应用之外；剩下的用令牌桶按 2000 TPS 的速率往下游放令牌，桶容量留一点突发余量，取不到令牌的直接返回「活动繁忙」。2000 这个数不是拍的，压测里数据库写入 TPS 贴到 2000 时 P99 开始陡增，那就是拐点，阈值卡在拐点附近、再留一点缓冲。算法选择有代价：固定窗口最简单，但窗口边界会放过双倍流量——1 秒限 10 次，前一秒最后 10 毫秒 10 次、后一秒前 10 毫秒 10 次，20 毫秒里过了 20 次；滑动窗口把 1 秒切成 5 个 200 毫秒小窗各自计数，解决了边界穿透，代价是每个小窗的计数都要存，且流量依旧不平滑；漏桶用消息队列按固定速率漏出，突发全在队列里排队，响应时间被拉长，和 P99 低于 200 毫秒直接冲突。整点那种瞬时尖峰选令牌桶：桶里平时攒下的令牌能一次性应对开抢那一秒，又不给通过的请求额外排队延迟。</p>
+<pre class="mermaid">
+flowchart TB
+    U[&quot;2 万 QPS 入口&quot;] --&gt; GW[&quot;网关：资格预判加整体限流&quot;]
+    GW --&gt; TB[&quot;令牌桶：按 2000 TPS 放令牌&quot;]
+    TB --&gt;|&quot;取到令牌&quot;| MQ[&quot;消息队列：削峰排队&quot;]
+    TB --&gt;|&quot;未取到令牌&quot;| REJ[&quot;快速拒绝 返回活动繁忙&quot;]
+    MQ --&gt; W[&quot;下单应用：限 2000 TPS 写入&quot;]
+    W --&gt; DB[&quot;数据库 写入上限 2000 TPS&quot;]
+</pre>
+
+<p>粒度也要选。单机限流按 20 台实例平摊每台 100 TPS，一旦扩缩容或流量倾斜，总量立刻漂移，数据库还是可能被打穿，所以集群总量得共享一个桶，用缓存存令牌数。代价是每次取令牌访问一次缓存，多几毫秒，折中是一次取一批令牌减少往返。再叠一层用户粒度，同一用户每秒只放几次，防脚本刷单；接口粒度卡在下单接口上，别把商品详情这类读请求一起限死。阈值放配置中心，压测拐点变了就动态调，不写进代码。</p>
+<p>支付回调从 50 毫秒拖到 2 秒时，下单应用给这个下游挂熔断器：连续超时到 20 次就打开，后续调用不再等那 2 秒，直接快速失败，线程立刻还回池子；打开态冷却 10 秒转半打开，放 5 个试探，全成功回关闭，任一失败回打开。代价写清楚——快速失败意味着一批订单的支付结果当时没确认，状态要靠异步对账补齐，这部分延迟确认是拿稳定性换的，得有对账兜着。熔断不解决支付网关为什么慢，排查该做还是得做。</p>
+<p>商品详情和推荐位的降级顺序，照清单从最不重要的关起：先关个性化推荐位，它依赖独立推荐服务，关掉只影响转化、不影响能否下单；再关评论列表，读数据直接返回空列表或兜底文案；活动页只保留「预约 30 万」「剩余库存」「立即抢购」三样。商品主体数据和库存扣减不进清单，关了就没法下单。开关放配置中心热更新，不重启 20 台应用，并且提前演练过一次。</p>
+<h2 id="代码与目录"><a href="#代码与目录" class="headerlink" title="代码与目录"></a>代码与目录</h2><p>熔断状态机和令牌桶各自独立成类，放在 resilience 包，别和下单业务混在一起。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">seckill-app/</span><br><span class="line">├── interfaces/web/SeckillController.java</span><br><span class="line">├── application/SeckillAppService.java</span><br><span class="line">├── infrastructure/resilience/CircuitBreaker.java</span><br><span class="line">├── infrastructure/resilience/TokenBucketLimiter.java</span><br><span class="line">└── config/ResilienceConfig.java</span><br></pre></td></tr></table></figure>
+
+<p>状态机只回答两件事：这次调用放不放行，调用结果怎么改状态。半打开态限制试探数量，失败一次立刻回打开。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.resilience;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.atomic.AtomicInteger;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 三态熔断器：保护调用方快速失败并释放线程，不修复下游。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">CircuitBreaker</span> &#123;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">enum</span> <span class="title class_">State</span> &#123; CLOSED, OPEN, HALF_OPEN &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">int</span> failureThreshold;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> cooldownMs;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">int</span> probeLimit;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">volatile</span> <span class="type">State</span> <span class="variable">state</span> <span class="operator">=</span> State.CLOSED;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">AtomicInteger</span> <span class="variable">failures</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">AtomicInteger</span>();</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">AtomicInteger</span> <span class="variable">halfOpenProbes</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">AtomicInteger</span>();</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">AtomicInteger</span> <span class="variable">halfOpenSuccesses</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">AtomicInteger</span>();</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">volatile</span> <span class="type">long</span> openedAt;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">CircuitBreaker</span><span class="params">(<span class="type">int</span> failureThreshold, <span class="type">long</span> cooldownMs, <span class="type">int</span> probeLimit)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.failureThreshold = failureThreshold;</span><br><span class="line">        <span class="built_in">this</span>.cooldownMs = cooldownMs;</span><br><span class="line">        <span class="built_in">this</span>.probeLimit = probeLimit;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="comment">/** 打开态冷却结束后自动转半打开；半打开态只放行固定数量的试探。 */</span></span><br><span class="line">    <span class="keyword">public</span> <span class="type">boolean</span> <span class="title function_">allow</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="type">State</span> <span class="variable">s</span> <span class="operator">=</span> state;</span><br><span class="line">        <span class="keyword">if</span> (s == State.CLOSED) &#123;</span><br><span class="line">            <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">if</span> (s == State.HALF_OPEN) &#123;</span><br><span class="line">            <span class="keyword">return</span> halfOpenProbes.incrementAndGet() &lt;= probeLimit;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">long</span> <span class="variable">now</span> <span class="operator">=</span> System.currentTimeMillis();</span><br><span class="line">        <span class="keyword">if</span> (now - openedAt &gt;= cooldownMs) &#123;</span><br><span class="line">            <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">                <span class="keyword">if</span> (state == State.OPEN) &#123;</span><br><span class="line">                    halfOpenProbes.set(<span class="number">0</span>);</span><br><span class="line">                    halfOpenSuccesses.set(<span class="number">0</span>);</span><br><span class="line">                    state = State.HALF_OPEN;</span><br><span class="line">                    <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onSuccess</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">if</span> (state == State.HALF_OPEN) &#123;</span><br><span class="line">            <span class="keyword">if</span> (halfOpenSuccesses.incrementAndGet() &gt;= probeLimit) &#123;</span><br><span class="line">                toClosed();</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; <span class="keyword">else</span> <span class="keyword">if</span> (state == State.CLOSED) &#123;</span><br><span class="line">            failures.set(<span class="number">0</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">onFailure</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="type">State</span> <span class="variable">s</span> <span class="operator">=</span> state;</span><br><span class="line">        <span class="keyword">if</span> (s == State.HALF_OPEN) &#123;</span><br><span class="line">            toOpen();</span><br><span class="line">        &#125; <span class="keyword">else</span> <span class="keyword">if</span> (s == State.CLOSED &amp;&amp; failures.incrementAndGet() &gt;= failureThreshold) &#123;</span><br><span class="line">            toOpen();</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">toOpen</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">            openedAt = System.currentTimeMillis();</span><br><span class="line">            state = State.OPEN;</span><br><span class="line">            failures.set(<span class="number">0</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">toClosed</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">synchronized</span> (<span class="built_in">this</span>) &#123;</span><br><span class="line">            state = State.CLOSED;</span><br><span class="line">            failures.set(<span class="number">0</span>);</span><br><span class="line">            halfOpenProbes.set(<span class="number">0</span>);</span><br><span class="line">            halfOpenSuccesses.set(<span class="number">0</span>);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> State <span class="title function_">state</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> state;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>令牌桶按固定速率补令牌，桶有上限，平时攒下的令牌用来应对整点那一秒的尖峰：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">package</span> com.example.seckill.infrastructure.resilience;</span><br><span class="line"></span><br><span class="line"><span class="keyword">import</span> java.util.concurrent.atomic.AtomicLong;</span><br><span class="line"></span><br><span class="line"><span class="comment">/** 单机令牌桶：按固定速率补令牌，桶有上限，允许一定突发。 */</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">final</span> <span class="keyword">class</span> <span class="title class_">TokenBucketLimiter</span> &#123;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> capacity;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> refillTokens;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> <span class="type">long</span> refillPeriodNanos;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> AtomicLong tokens;</span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">final</span> AtomicLong lastRefill;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="title function_">TokenBucketLimiter</span><span class="params">(<span class="type">long</span> capacity, <span class="type">long</span> refillTokens, <span class="type">long</span> refillPeriodMillis)</span> &#123;</span><br><span class="line">        <span class="built_in">this</span>.capacity = capacity;</span><br><span class="line">        <span class="built_in">this</span>.refillTokens = refillTokens;</span><br><span class="line">        <span class="built_in">this</span>.refillPeriodNanos = refillPeriodMillis * <span class="number">1000000L</span>;</span><br><span class="line">        <span class="built_in">this</span>.tokens = <span class="keyword">new</span> <span class="title class_">AtomicLong</span>(capacity);</span><br><span class="line">        <span class="built_in">this</span>.lastRefill = <span class="keyword">new</span> <span class="title class_">AtomicLong</span>(System.nanoTime());</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> <span class="type">boolean</span> <span class="title function_">tryAcquire</span><span class="params">()</span> &#123;</span><br><span class="line">        refill();</span><br><span class="line">        <span class="type">long</span> cur;</span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            cur = tokens.get();</span><br><span class="line">            <span class="keyword">if</span> (cur &lt;= <span class="number">0</span>) &#123;</span><br><span class="line">                <span class="keyword">return</span> <span class="literal">false</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; <span class="keyword">while</span> (!tokens.compareAndSet(cur, cur - <span class="number">1</span>));</span><br><span class="line">        <span class="keyword">return</span> <span class="literal">true</span>;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">private</span> <span class="keyword">void</span> <span class="title function_">refill</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="type">long</span> <span class="variable">now</span> <span class="operator">=</span> System.nanoTime();</span><br><span class="line">        <span class="type">long</span> <span class="variable">last</span> <span class="operator">=</span> lastRefill.get();</span><br><span class="line">        <span class="type">long</span> <span class="variable">elapsed</span> <span class="operator">=</span> now - last;</span><br><span class="line">        <span class="keyword">if</span> (elapsed &lt; refillPeriodNanos) &#123;</span><br><span class="line">            <span class="keyword">return</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">long</span> <span class="variable">periods</span> <span class="operator">=</span> elapsed / refillPeriodNanos;</span><br><span class="line">        <span class="keyword">if</span> (!lastRefill.compareAndSet(last, last + periods * refillPeriodNanos)) &#123;</span><br><span class="line">            <span class="keyword">return</span>;</span><br><span class="line">        &#125;</span><br><span class="line">        <span class="type">long</span> cur;</span><br><span class="line">        <span class="keyword">do</span> &#123;</span><br><span class="line">            cur = tokens.get();</span><br><span class="line">            <span class="type">long</span> <span class="variable">next</span> <span class="operator">=</span> Math.min(capacity, cur + periods * refillTokens);</span><br><span class="line">            <span class="keyword">if</span> (tokens.compareAndSet(cur, next)) &#123;</span><br><span class="line">                <span class="keyword">return</span>;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; <span class="keyword">while</span> (<span class="literal">true</span>);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>边界要写明。这个令牌桶是单进程内的，20 台应用各管各的，集群总量得把令牌数放到缓存里共享，一次取一批来摊薄访问延迟。状态机同样是进程内的，每台实例的熔断状态不共享，但快速失败这件事单机做就够，不必为了状态一致再引一层协调。半打开的试探数别超过下游短期能扛的量，否则刚从打开态出来又被压回去。</p>
+<h2 id="反模式与适用边界"><a href="#反模式与适用边界" class="headerlink" title="反模式与适用边界"></a>反模式与适用边界</h2><ol>
+<li><strong>降级时临时找哪些能关。</strong> 没有预先的核心 &#x2F; 非核心清单，故障时翻代码，停错依赖会把核心链路一起停掉。清单平时定好，按「关掉只影响体验、不影响下单」排序。</li>
+<li><strong>把熔断当成修下游。</strong> 熔断打开后下游该慢还是慢，它只让调用方快速失败、释放线程。以为拨了熔断器问题就结束，不再查支付网关为什么慢，故障会一直挂着。</li>
+<li><strong>用固定窗口限流挡秒杀尖峰。</strong> 窗口边界放过双倍流量，1 秒限 10 次，20 毫秒里能过 20 次。整点瞬时尖峰换令牌桶，滑动窗口也救不了流量不平滑。</li>
+<li><strong>限流阈值拍脑袋。</strong> 设小了误伤正常请求，设大了等于没限。阈值来自压测拐点（数据库 2000 TPS），并且放配置中心能动态调，不写死在代码里。</li>
+<li><strong>只做单机限流。</strong> 20 台实例各限各的，总量随实例数和流量倾斜漂移，数据库还是会被打穿。集群总量要共享计数，代价是每次取令牌多几毫秒。</li>
+</ol>
+<p>下面这些情况，这套做法可以不做或只做一半：</p>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>为什么不必套</th>
+<th>建议做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>内部后台、报表系统，峰值不到单机拐点十分之一</td>
+<td>限流几乎不触发，熔断也很少跳</td>
+<td>留基础监控即可</td>
+</tr>
+<tr>
+<td>一次性静态活动页</td>
+<td>请求在 CDN 挡完，没有下游调用链</td>
+<td>不做熔断降级，盯 CDN 命中率</td>
+</tr>
+<tr>
+<td>低流量的资金类强事务操作</td>
+<td>首要目标是一致性与可追溯</td>
+<td>别用降级丢写，优先正确性</td>
+</tr>
+<tr>
+<td>依赖少、链路短的单体应用</td>
+<td>没有级联雪崩的传导路径</td>
+<td>超时加重试即可，不上状态机</td>
+</tr>
+<tr>
+<td>原型验证期，流量模型一周一变</td>
+<td>压测拐点很快失效，阈值没有意义</td>
+<td>只记录数据，不预设限流阈值</td>
+</tr>
+</tbody></table>
+<h2 id="要点速查"><a href="#要点速查" class="headerlink" title="要点速查"></a>要点速查</h2><table>
+<thead>
+<tr>
+<th>项</th>
+<th>结论</th>
+<th>代价 &#x2F; 常见坑</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>降级</td>
+<td>按非核心清单主动关，有损换核心可用</td>
+<td>临时找清单，关错核心</td>
+</tr>
+<tr>
+<td>熔断三态</td>
+<td>关闭 &#x2F; 打开 &#x2F; 半打开，快速失败释放线程</td>
+<td>当成修复下游的手段</td>
+</tr>
+<tr>
+<td>雪崩触发点</td>
+<td>依赖变慢比宕机更危险</td>
+<td>只盯错误率，不看响应时间</td>
+</tr>
+<tr>
+<td>固定窗口 &#x2F; 滑动窗口</td>
+<td>实现简单，前者边界穿透、后者不平滑</td>
+<td>拿它挡整点尖峰</td>
+</tr>
+<tr>
+<td>漏桶</td>
+<td>恒定速率漏出，突发在队列排队</td>
+<td>拉长响应时间，和 P99 目标冲突</td>
+</tr>
+<tr>
+<td>令牌桶</td>
+<td>攒令牌应对突发，不给通过请求排队</td>
+<td>分布式取令牌多几毫秒延迟</td>
+</tr>
+<tr>
+<td>限流粒度</td>
+<td>集群总量优先，叠加接口与用户</td>
+<td>只做单机，总量随实例漂移</td>
+</tr>
+<tr>
+<td>阈值来源</td>
+<td>压测拐点，数据库 2000 TPS</td>
+<td>拍数、写死在代码里</td>
+</tr>
+<tr>
+<td>开关演练</td>
+<td>没演练过的开关等于没有</td>
+<td>加了不测，真出事不生效</td>
+</tr>
+<tr>
+<td>降级顺序</td>
+<td>推荐位 → 评论 → 活动页要素</td>
+<td>把商品主体和库存一起关掉</td>
+</tr>
+</tbody></table>
+<p>限流阈值只有一句合格写法：在压测拐点的哪一侧、留多少缓冲。填不出拐点，阈值就只能靠猜，误伤和放行之间来回摇摆。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>降级、熔断、限流是三件不同的事，别混着叫。降级是主动关掉非核心功能换核心可用，熔断是调用方不再把线程借给慢下游，限流是在入口把超过承载能力的请求挡回去。三者共用同一个数：数据库 2000 TPS 那条拐点。阈值从它来，降级顺序按它排，熔断的失败阈值也贴着它调。少了压测拐点，这几个开关都只能靠猜。代价同样直白：快速失败换来一批订单状态延迟确认，集群限流换来每次取令牌的几毫秒，关掉推荐位换来转化率下降——都在账上，只是比整条链路不可用便宜。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《高并发系统设计 40 问》</li>
+<li>Michael T. Nygard, <em>Release It!</em></li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/07/10/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E9%99%8D%E7%BA%A7%E7%86%94%E6%96%AD%E4%B8%8E%E6%B5%81%E9%87%8F%E6%8E%A7%E5%88%B6/" title="高并发（十一）降级熔断与流量控制">https://xssdpgy.github.io/2023/07/10/高并发（十一）降级熔断与流量控制/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%AB%98%E5%B9%B6%E5%8F%91/" rel="tag"># 高并发</a>
+              <a href="/tags/%E7%A8%B3%E5%AE%9A%E6%80%A7/" rel="tag"># 稳定性</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/07/05/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%EF%BC%89%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E3%80%81%E5%8E%8B%E6%B5%8B%E4%B8%8E%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86/" rel="prev" title="高并发（十）可观测性、压测与配置管理">
+      <i class="fa fa-chevron-left"></i> 高并发（十）可观测性、压测与配置管理
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/" rel="next" title="高并发（十二）信息流系统的推拉模式取舍">
+      高并发（十二）信息流系统的推拉模式取舍 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A6%82%E5%BF%B5%E7%95%8C%E5%AE%9A"><span class="nav-text">概念界定</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E4%B8%8E%E7%9B%AE%E5%BD%95"><span class="nav-text">代码与目录</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%8D%E6%A8%A1%E5%BC%8F%E4%B8%8E%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">反模式与适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A6%81%E7%82%B9%E9%80%9F%E6%9F%A5"><span class="nav-text">要点速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">30</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">32</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '23b41b734724bc575dd358b4831f29e0',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
