@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="本次研究面向公司开发环境筛选可用的 AI 辅助编程工具。ChatGPT 将代码生成与语义理解能力推到了新的水平，各类辅助编程插件密集出现，需要从实际开发场景出发做一次验证，而不是只看官网列出的功能。 调研背景自 2022 年 11 月 ChatGPT 发布以来，大语言模型在代码生成与语义理解上的能力进入工程可用阶段，半年间相关工具从概念验证迅速走向开发环境集成。 当今的软件开发工作需要高效地完成繁">
+<meta property="og:type" content="article">
+<meta property="og:title" content="AI 工具辅助开发研究">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/05/23/AI%E5%B7%A5%E5%85%B7%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%A0%94%E7%A9%B6/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="本次研究面向公司开发环境筛选可用的 AI 辅助编程工具。ChatGPT 将代码生成与语义理解能力推到了新的水平，各类辅助编程插件密集出现，需要从实际开发场景出发做一次验证，而不是只看官网列出的功能。 调研背景自 2022 年 11 月 ChatGPT 发布以来，大语言模型在代码生成与语义理解上的能力进入工程可用阶段，半年间相关工具从概念验证迅速走向开发环境集成。 当今的软件开发工作需要高效地完成繁">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E6%8F%90%E7%A4%BA%E7%94%9F%E6%88%90%E4%BB%A3%E7%A0%81.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%B8%8A%E4%B8%8B%E6%96%87%E4%BB%A3%E7%A0%81%E8%A1%A5%E5%85%A8.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BB%A3%E7%A0%81%E9%87%8D%E6%9E%84%E5%AF%B9%E6%AF%94.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BB%A3%E7%A0%81%E8%A7%A3%E9%87%8A.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E7%94%9F%E6%88%90%E6%B3%A8%E9%87%8A.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E5%8D%95%E5%85%83%E6%B5%8B%E8%AF%95.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E6%80%A7%E8%83%BD%E6%A3%80%E6%9F%A5.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E5%AE%89%E5%85%A8%E6%A3%80%E6%9F%A5.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-AI%E5%AF%B9%E8%AF%9D.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BA%A7%E5%93%81%E5%8A%9F%E8%83%BD%E5%AF%B9%E6%AF%94.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E9%80%89%E5%9E%8B%E7%BB%93%E8%AE%BA.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E7%95%8C%E9%9D%A2.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E7%89%88%E6%9C%AC%E8%AF%B4%E6%98%8E.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E8%AE%A1%E5%88%92%E4%BF%A1%E6%81%AF.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Codeium%E4%BB%A3%E7%A0%81%E8%A1%A5%E5%85%A8.png">
+<meta property="article:published_time" content="2023-05-23T07:05:11.000Z">
+<meta property="article:modified_time" content="2023-05-23T07:05:11.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="AI 辅助编程">
+<meta property="article:tag" content="工具选型">
+<meta property="article:tag" content="研发效能">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E6%8F%90%E7%A4%BA%E7%94%9F%E6%88%90%E4%BB%A3%E7%A0%81.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/05/23/AI%E5%B7%A5%E5%85%B7%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%A0%94%E7%A9%B6/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>AI 工具辅助开发研究 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/05/23/AI%E5%B7%A5%E5%85%B7%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%A0%94%E7%A9%B6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          AI 工具辅助开发研究
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-05-23 15:05:11" itemprop="dateCreated datePublished" datetime="2023-05-23T15:05:11+08:00">2023-05-23</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/AI%E5%B7%A5%E5%85%B7/" itemprop="url" rel="index"><span itemprop="name">AI工具</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>2.9k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>本次研究面向公司开发环境筛选可用的 AI 辅助编程工具。ChatGPT 将代码生成与语义理解能力推到了新的水平，各类辅助编程插件密集出现，需要从实际开发场景出发做一次验证，而不是只看官网列出的功能。</p>
+<h2 id="调研背景"><a href="#调研背景" class="headerlink" title="调研背景"></a>调研背景</h2><p>自 2022 年 11 月 ChatGPT 发布以来，大语言模型在代码生成与语义理解上的能力进入工程可用阶段，半年间相关工具从概念验证迅速走向开发环境集成。</p>
+<p>当今的软件开发工作需要高效地完成繁琐的编码任务，而人工编程往往耗费时间和精力。为了提高开发效率并简化代码编写过程，人工智能技术被应用于软件开发领域中，因此出现了基于 AI 辅助编程插件的新型软件开发工具。</p>
+<p>得益于人工智能技术的迅速发展，尤其是 ChatGPT 技术的出现，极大地增强了 AI 辅助编程的智能化和语义理解能力，可以帮助程序员更加快捷、准确、高效地完成编程工作。人工智能技术已经可以较好地理解开发者的意图，并对代码进行分析、优化和修正。</p>
+<p>在此背景下，预研人工智能应用工具选型、组件应用验证（基础代码编写、单元测试代码等）等事宜。</p>
+<h2 id="AI-辅助开发的方式"><a href="#AI-辅助开发的方式" class="headerlink" title="AI 辅助开发的方式"></a>AI 辅助开发的方式</h2><p>工具主要附着在开发环境上，而不是替代开发环境。调研范围内支持的开发环境包括 IDEA、VSCode 以及独立工具；主流支持的语言有 Python、Java、JavaScript、C++、C#、PHP、Go。</p>
+<p>适用于公司开发环境及公司主要开发语言（Java、Vue、JavaScript）。</p>
+<h2 id="当前-AI-工具辅助开发的主要功能"><a href="#当前-AI-工具辅助开发的主要功能" class="headerlink" title="当前 AI 工具辅助开发的主要功能"></a>当前 AI 工具辅助开发的主要功能</h2><p>调研把工具能力归纳为六类：</p>
+<ol>
+<li><strong>代码生成与自动补全</strong>：根据上下文，推断出可能想要输入的代码片段，并为其提供自动补全建议。</li>
+<li><strong>代码重构</strong>：根据最佳实践和代码库，自动重构代码以提高可读性和可维护性。</li>
+<li><strong>代码解释</strong>：解释代码实现的功能。</li>
+<li><strong>生成注释</strong>：根据函数、类和变量等元素的信息，自动生成注释，以提高代码的可读性和可维护性。</li>
+<li><strong>测试用例</strong>：提供关于单元测试的建议和指导，帮助更好地完成单元测试任务。</li>
+<li><strong>性能优化</strong>：协助排查代码里的性能问题。</li>
+</ol>
+<h2 id="研究评测关注的问题"><a href="#研究评测关注的问题" class="headerlink" title="研究评测关注的问题"></a>研究评测关注的问题</h2><p>评测围绕三个维度展开，其中前两个维度进入实际对比，第三个维度作为可用性门槛。</p>
+<ul>
+<li><strong>对应用问题的理解能力</strong>：关注工具是否已经可以结合 AI 较好地理解开发者的意图，在生成代码或功能解释等方面，能够结合服务上下文给出更精准的推荐及解释。</li>
+<li><strong>功能性</strong>：关注通过 AI 实现辅助编程的功能点，一方面为功能的全面性，另一方面为功能的符合性。</li>
+<li><strong>可获得性</strong>：安装难易程度／上手难度、国内是否能访问、费用。</li>
+</ul>
+<p>GitHub Copilot 因需付费使用且国内申请有限制，只做登记，不进入详细研究。</p>
+<h2 id="本次研究的产品"><a href="#本次研究的产品" class="headerlink" title="本次研究的产品"></a>本次研究的产品</h2><table>
+<thead>
+<tr>
+<th>产品</th>
+<th>网站</th>
+<th>功能</th>
+<th>部署方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cursor</td>
+<td><a target="_blank" rel="noopener" href="https://www.cursor.so/">https://www.cursor.so/</a></td>
+<td>代码生成、AI 对话</td>
+<td>独立工具安装</td>
+</tr>
+<tr>
+<td>Codeium</td>
+<td><a target="_blank" rel="noopener" href="https://codeium.com/">https://codeium.com/</a></td>
+<td>代码生成、AI 对话（搜索）</td>
+<td>IDEA、VSCode 插件</td>
+</tr>
+<tr>
+<td>Bito</td>
+<td><a target="_blank" rel="noopener" href="https://bito.ai/">https://bito.ai/</a></td>
+<td>编写代码、理解语法、编写测试用例、解释／评论代码、安全检查</td>
+<td>IDEA、VSCode 插件</td>
+</tr>
+<tr>
+<td>Safurai</td>
+<td><a target="_blank" rel="noopener" href="https://www.safurai.com/">https://www.safurai.com</a></td>
+<td>编写代码（对话方式）、理解语法、编写测试用例、解释／评论代码、安全检查</td>
+<td>VSCode 插件</td>
+</tr>
+<tr>
+<td>AWS CodeWhisperer</td>
+<td><a target="_blank" rel="noopener" href="https://aws.amazon.com/cn/codewhisperer/">https://aws.amazon.com/cn/codewhisperer/</a></td>
+<td>代码生成补全、代码安全检查</td>
+<td>IDEA、VSCode 插件</td>
+</tr>
+<tr>
+<td>Alibaba Cloud AI Coding Assistant</td>
+<td><a target="_blank" rel="noopener" href="https://developer.aliyun.com/tool/cosy">https://developer.aliyun.com/tool/cosy</a></td>
+<td>代码补全、代码文档搜索</td>
+<td>IDEA 插件</td>
+</tr>
+<tr>
+<td>Tabnine</td>
+<td><a target="_blank" rel="noopener" href="https://www.tabnine.com/">https://www.tabnine.com/</a></td>
+<td>代码补全及建议</td>
+<td>IDEA、VSCode 插件</td>
+</tr>
+<tr>
+<td>GitHub Copilot</td>
+<td><a target="_blank" rel="noopener" href="https://github.com/features/copilot/">https://github.com/features/copilot/</a></td>
+<td>代码补全及建议、AI 对话、Pull Requests 补充、命令及文档生成</td>
+<td>IDEA、VSCode 插件（不进入详细研究）</td>
+</tr>
+</tbody></table>
+<h2 id="研究方法与使用场景"><a href="#研究方法与使用场景" class="headerlink" title="研究方法与使用场景"></a>研究方法与使用场景</h2><p>从功能性的全面及对应用问题的理解能力两个维度对各工具进行调研、使用及对比，对各个使用场景进行验证，分析各 AI 编程辅助插件的表现。</p>
+<p>验证场景分为两类：</p>
+<ul>
+<li><strong>历史代码理解优化</strong>：整洁代码、代码解释、生成注释、检查及优化。</li>
+<li><strong>新开发功能辅助</strong>：代码生成补全、测试用例。</li>
+</ul>
+<h2 id="功能实测"><a href="#功能实测" class="headerlink" title="功能实测"></a>功能实测</h2><h3 id="代码生成补全"><a href="#代码生成补全" class="headerlink" title="代码生成补全"></a>代码生成补全</h3><p>方式一，根据提示生成准确的代码建议。下图为通过自然语言提示生成线程安全单例模式的实际结果，工具同时给出了实现说明。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E6%8F%90%E7%A4%BA%E7%94%9F%E6%88%90%E4%BB%A3%E7%A0%81.png" alt="根据提示生成线程安全的单例实现"></p>
+<p>方式二，在代码编辑栏里根据提示或注释，联系上下文，生成行级或段级的补全代码。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%B8%8A%E4%B8%8B%E6%96%87%E4%BB%A3%E7%A0%81%E8%A1%A5%E5%85%A8.png" alt="编辑器内根据上下文生成方法体"></p>
+<h3 id="代码重构"><a href="#代码重构" class="headerlink" title="代码重构"></a>代码重构</h3><p>一键整理代码格式，清理代码中空行、日志打印等操作，形成代码整理前后的对比显示。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BB%A3%E7%A0%81%E9%87%8D%E6%9E%84%E5%AF%B9%E6%AF%94.png" alt="代码整理前后的差异对比"></p>
+<h3 id="代码解释"><a href="#代码解释" class="headerlink" title="代码解释"></a>代码解释</h3><p>对代码功能的解释，可按执行步骤顺序解释代码实现的功能，帮助开发人员迅速了解代码。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BB%A3%E7%A0%81%E8%A7%A3%E9%87%8A.png" alt="按执行步骤解释代码"></p>
+<h3 id="生成注释"><a href="#生成注释" class="headerlink" title="生成注释"></a>生成注释</h3><p>根据函数、类和变量等元素的信息，自动生成注释，以提高代码的可读性和可维护性。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E7%94%9F%E6%88%90%E6%B3%A8%E9%87%8A.png" alt="为方法自动生成注释"></p>
+<h3 id="单元测试"><a href="#单元测试" class="headerlink" title="单元测试"></a>单元测试</h3><p>根据编译环境，选择合适的单元测试框架，根据方法的出入参，提供关于单元测试的建议和指导。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E5%8D%95%E5%85%83%E6%B5%8B%E8%AF%95.png" alt="单元测试生成建议"></p>
+<h3 id="性能优化及检查"><a href="#性能优化及检查" class="headerlink" title="性能优化及检查"></a>性能优化及检查</h3><p>协助排查代码里的性能问题，以及代码里的安全问题。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E6%80%A7%E8%83%BD%E6%A3%80%E6%9F%A5.png" alt="性能问题排查"></p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E5%AE%89%E5%85%A8%E6%A3%80%E6%9F%A5.png" alt="安全问题检查"></p>
+<h3 id="AI-对话"><a href="#AI-对话" class="headerlink" title="AI 对话"></a>AI 对话</h3><p>提供 AI 对话框，可实现对话，对任何技术概念进行提问。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-AI%E5%AF%B9%E8%AF%9D.png" alt="AI 对话窗口"></p>
+<h2 id="产品汇总对比"><a href="#产品汇总对比" class="headerlink" title="产品汇总对比"></a>产品汇总对比</h2><p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E4%BA%A7%E5%93%81%E5%8A%9F%E8%83%BD%E5%AF%B9%E6%AF%94.png" alt="八维功能的产品汇总对比表"></p>
+<p>对比维度为代码生成、整洁代码、代码解释、生成注释、测试用例、性能优化、AI 对话、是否有企业或升级服务。从表中可以看到：Cursor 与 Codeium 的代码生成能力最突出（两项标记），Bito 与 Safurai 在整洁代码、代码解释、生成注释、测试用例、性能优化、AI 对话等功能上覆盖最完整；AWS CodeWhisperer、Tabnine、Alibaba Cosy 主要集中在代码补全这一项。</p>
+<h2 id="结论"><a href="#结论" class="headerlink" title="结论"></a>结论</h2><p>从功能性的全面及对应用问题的理解能力两个维度对各工具进行调研、使用及对比，综合判断，<strong>Bito AI 插件可满足大部分 AI 辅助编程应用场景，可在基于此插件的基础上结合 Codeium 插件，增强整体的代码自动补全功能</strong>。</p>
+<p>两者结合可借助 AI 的能力，在代码生成、测试用例、代码检查、程序上下文理解等方面为开发人员提供辅助，帮助提升开发效率。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-%E9%80%89%E5%9E%8B%E7%BB%93%E8%AE%BA.png" alt="选型结论"></p>
+<h3 id="选型-Bito-AI-实现大部分-AI-辅助编程功能"><a href="#选型-Bito-AI-实现大部分-AI-辅助编程功能" class="headerlink" title="选型 Bito AI 实现大部分 AI 辅助编程功能"></a>选型 Bito AI 实现大部分 AI 辅助编程功能</h3><p>Bito 是一款建立在 OpenAI 和 ChatGPT 模型之上的人工智能编程辅助软件，可以帮助开发人员大幅提升工作效率。它是一个功能齐全的工具，使用和 ChatGPT 相同的模型，可让开发效率提升，并每天节省一个小时的时间。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E7%95%8C%E9%9D%A2.png" alt="Bito 工具界面"></p>
+<p>Bito AI 是一种通用的 AI 助手，开发者可以向其提出任何技术问题，通过自然语言提示生成代码，并获得现有代码的反馈。它可以辅助完成的能力包括：</p>
+<ul>
+<li>生成代码：向 Bito 提出任何语言的代码生成请求，并获取自然语言提示。</li>
+<li>命令语法：询问任何技术命令的语法。</li>
+<li>测试用例：为代码生成测试用例。</li>
+<li>解释代码：解释选定的代码，询问此代码的工作原理或它所做的事情。</li>
+<li>注释方法：为函数或方法生成注释，以添加到代码中。</li>
+<li>提高性能：询问如何提高给定代码的性能。</li>
+<li>检查安全：询问选择的代码是否有任何已知的安全问题。</li>
+<li>学习技术概念：对任何技术概念提问。</li>
+</ul>
+<p>根据官方的介绍，Bito 分个人计划版本和商业计划版本，个人计划免费使用，商业计划暂未发布。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E7%89%88%E6%9C%AC%E8%AF%B4%E6%98%8E.png" alt="Bito 版本说明"></p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Bito%E8%AE%A1%E5%88%92%E4%BF%A1%E6%81%AF.png" alt="Bito 计划信息"></p>
+<h3 id="选型-Codeium-提升代码生成补全能力"><a href="#选型-Codeium-提升代码生成补全能力" class="headerlink" title="选型 Codeium 提升代码生成补全能力"></a>选型 Codeium 提升代码生成补全能力</h3><p>借助 Codeium 生成的快速多行代码建议，可以省去搜索 API 和文档、编写样板和单元测试以及其他重复性的任务所花费的时间。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/AI%E5%B7%A5%E5%85%B7-Codeium%E4%BB%A3%E7%A0%81%E8%A1%A5%E5%85%A8.png" alt="Codeium 多行代码建议"></p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/05/23/AI%E5%B7%A5%E5%85%B7%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%A0%94%E7%A9%B6/" title="AI 工具辅助开发研究">https://xssdpgy.github.io/2023/05/23/AI工具辅助开发研究/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/AI-%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B/" rel="tag"># AI 辅助编程</a>
+              <a href="/tags/%E5%B7%A5%E5%85%B7%E9%80%89%E5%9E%8B/" rel="tag"># 工具选型</a>
+              <a href="/tags/%E7%A0%94%E5%8F%91%E6%95%88%E8%83%BD/" rel="tag"># 研发效能</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/05/17/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%9B%9B%EF%BC%89%E5%88%86%E5%BA%93%E5%88%86%E8%A1%A8%E4%B8%8E%E5%85%A8%E5%B1%80%E5%94%AF%E4%B8%80%20ID/" rel="prev" title="高并发（四）分库分表与全局唯一 ID">
+      <i class="fa fa-chevron-left"></i> 高并发（四）分库分表与全局唯一 ID
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/05/25/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%BA%94%EF%BC%89NoSQL%20%E4%B8%8E%E7%BC%93%E5%AD%98%E8%AF%BB%E5%86%99%E7%AD%96%E7%95%A5/" rel="next" title="高并发（五）NoSQL 与缓存读写策略">
+      高并发（五）NoSQL 与缓存读写策略 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B0%83%E7%A0%94%E8%83%8C%E6%99%AF"><span class="nav-text">调研背景</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#AI-%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%9A%84%E6%96%B9%E5%BC%8F"><span class="nav-text">AI 辅助开发的方式</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BD%93%E5%89%8D-AI-%E5%B7%A5%E5%85%B7%E8%BE%85%E5%8A%A9%E5%BC%80%E5%8F%91%E7%9A%84%E4%B8%BB%E8%A6%81%E5%8A%9F%E8%83%BD"><span class="nav-text">当前 AI 工具辅助开发的主要功能</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A0%94%E7%A9%B6%E8%AF%84%E6%B5%8B%E5%85%B3%E6%B3%A8%E7%9A%84%E9%97%AE%E9%A2%98"><span class="nav-text">研究评测关注的问题</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%9C%AC%E6%AC%A1%E7%A0%94%E7%A9%B6%E7%9A%84%E4%BA%A7%E5%93%81"><span class="nav-text">本次研究的产品</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A0%94%E7%A9%B6%E6%96%B9%E6%B3%95%E4%B8%8E%E4%BD%BF%E7%94%A8%E5%9C%BA%E6%99%AF"><span class="nav-text">研究方法与使用场景</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8A%9F%E8%83%BD%E5%AE%9E%E6%B5%8B"><span class="nav-text">功能实测</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E7%94%9F%E6%88%90%E8%A1%A5%E5%85%A8"><span class="nav-text">代码生成补全</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E9%87%8D%E6%9E%84"><span class="nav-text">代码重构</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%BB%A3%E7%A0%81%E8%A7%A3%E9%87%8A"><span class="nav-text">代码解释</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E7%94%9F%E6%88%90%E6%B3%A8%E9%87%8A"><span class="nav-text">生成注释</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%8D%95%E5%85%83%E6%B5%8B%E8%AF%95"><span class="nav-text">单元测试</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96%E5%8F%8A%E6%A3%80%E6%9F%A5"><span class="nav-text">性能优化及检查</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#AI-%E5%AF%B9%E8%AF%9D"><span class="nav-text">AI 对话</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BA%A7%E5%93%81%E6%B1%87%E6%80%BB%E5%AF%B9%E6%AF%94"><span class="nav-text">产品汇总对比</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%BB%93%E8%AE%BA"><span class="nav-text">结论</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%80%89%E5%9E%8B-Bito-AI-%E5%AE%9E%E7%8E%B0%E5%A4%A7%E9%83%A8%E5%88%86-AI-%E8%BE%85%E5%8A%A9%E7%BC%96%E7%A8%8B%E5%8A%9F%E8%83%BD"><span class="nav-text">选型 Bito AI 实现大部分 AI 辅助编程功能</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%80%89%E5%9E%8B-Codeium-%E6%8F%90%E5%8D%87%E4%BB%A3%E7%A0%81%E7%94%9F%E6%88%90%E8%A1%A5%E5%85%A8%E8%83%BD%E5%8A%9B"><span class="nav-text">选型 Codeium 提升代码生成补全能力</span></a></li></ol></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">31</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">4</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">35</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'ecf35fa2085c8c0d3c0cb93a87d1dd56',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
