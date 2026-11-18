@@ -247,7 +247,7 @@
                 <i class="far fa-file-word"></i>
               </span>
                 <span class="post-meta-item-text">本文字数：</span>
-              <span>3.5k</span>
+              <span>3.4k</span>
             </span>
             <span class="post-meta-item" title="阅读时长">
               <span class="post-meta-item-icon">
@@ -271,11 +271,9 @@
 
 <h2 id="NAT-与连接跟踪"><a href="#NAT-与连接跟踪" class="headerlink" title="NAT 与连接跟踪"></a>NAT 与连接跟踪</h2><p>NAT 改写 IP 包的源地址或目的地址，让多台内网机器共享出口 IP。静态 NAT 做一对一固定映射，动态 NAT 从地址池里挑，日常最常见的是带端口的 NAPT：SNAT 在发包时替换源地址和源端口，DNAT 在收包时替换目的地址和目的端口，两者一起用就形成双向的一对一映射。Linux 上这些规则由 Netfilter 框架执行，<code>iptables</code> 是配置入口；NAT 规则写在 nat 表，SNAT 与 MASQUERADE 挂 POSTROUTING 链，DNAT 挂 PREROUTING 链。转发还得打开 IP 转发选项。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-SNAT%E4%B8%8EDNAT%E8%BD%AC%E6%8D%A2%E8%BF%87%E7%A8%8B.png" alt="SNAT 与 DNAT 在网关两侧的改写位置"></p>
-<p><em>SNAT 与 DNAT 在网关两侧的改写位置</em></p>
 <p>改写地址要依赖连接跟踪模块 conntrack。它用一张哈希表记录每条连接的协议、地址和端口，回包才能找到对应的原始连接。这张表是 NAT 的实现基础，也是性能成本所在：每条新连接要查表和分配跟踪对象，表项满了会直接丢包。哈希表大小由 <code>nf_conntrack_buckets</code> 决定，最大记录数由 <code>nf_conntrack_max</code> 决定，两者的比值决定链表长度；调大上限意味着更多内存，调小则容易在并发高峰撞到天花板。MASQUERADE 是最常见的出口规则，多个内网地址转成同一个公网地址时，源端口可能被重新分配。连接按五元组区分，内网地址不同，端口相同也能共存；出口侧可用的端口数、连接跟踪表和带宽都在同一条链上，其中一项见顶就会拖住整体。</p>
 <h2 id="连接表打满的证据链"><a href="#连接表打满的证据链" class="headerlink" title="连接表打满的证据链"></a>连接表打满的证据链</h2><p>实验用两台机器，一台跑服务，一台用 ab 压测。先用主机网络起服务，并发五千、总请求十万，得到每秒六千五百多请求、平均延迟七百多毫秒的基线。换成做端口映射的容器后，两秒超时的压测只完成五千多个请求；把超时放宽到三十秒，结果变成每秒七十多个请求，平均延迟六十五秒。延迟涨了几十倍，先怀疑内核里有丢包。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-NAT%E5%8E%8B%E6%B5%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="NAT 压测的服务端与客户端两台机器"></p>
-<p><em>NAT 压测的服务端与客户端两台机器</em></p>
 <p>用动态追踪脚本挂在 <code>kfree_skb</code> 上统计丢包位置，输出里一万多个包丢在 <code>nf_hook_slow</code>，只有几百个丢在 <code>tcp_v4_rcv</code>。这个名字指向 Netfilter 的钩子函数，范围缩到 NAT 相关路径。接着用 <code>perf record</code> 抓调用栈，在报告里找 <code>nf_hook_slow</code>，三条主要路径浮出来：连接跟踪的 <code>ipv4_conntrack_in</code>、网桥转发的 <code>br_nf_pre_routing</code>、做 DNAT 的 <code>iptable_nat_ipv4_in</code>。三处开销都落在内核态，方向转向连接跟踪配置。</p>
 <pre class="mermaid">
 flowchart TD
@@ -297,7 +295,6 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ conntrack -L -o extended | <span class="built_in">wc</span> -l</span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;/^.*tcp.*$/ &#123;sum[$6]++&#125; END &#123;for(i in sum) print i, sum[i]&#125;&#x27;</span></span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;&#123;print $7&#125;&#x27;</span> | <span class="built_in">cut</span> -d <span class="string">&quot;=&quot;</span> -f 2 | <span class="built_in">sort</span> | <span class="built_in">uniq</span> -c | <span class="built_in">sort</span> -nr | <span class="built_in">head</span> -n 10</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-nf_hook_slow%E8%B0%83%E7%94%A8%E6%A0%88.png" alt="perf 报告中 nf_hook_slow 的三条调用路径"></p>
-<p><em>perf 报告中 nf_hook_slow 的三条调用路径</em></p>
 <h2 id="参数调整的常见顺序"><a href="#参数调整的常见顺序" class="headerlink" title="参数调整的常见顺序"></a>参数调整的常见顺序</h2><p>定位到瓶颈之前，调参数容易变成逐项试错。几种常见的走偏：</p>
 <ol>
 <li><strong>吞吐掉了就加套接字缓冲</strong>。缓冲区能吸收突发，也会拉长排队时间；连接表打满时，加缓冲只会让等待更久。</li>
@@ -381,7 +378,6 @@ flowchart TD
 </tr>
 </tbody></table>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-%E7%BD%91%E7%BB%9C%E6%8C%87%E6%A0%87%E4%B8%8E%E5%B7%A5%E5%85%B7%E5%AF%B9%E7%85%A7%E8%A1%A8.png" alt="网络性能指标与观测工具对照表"></p>
-<p><em>网络性能指标与观测工具对照表</em></p>
 <h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>NAT 的开销来自两处：Netfilter 钩子改地址，conntrack 维护连接状态。压测吞吐骤降时，沿丢包点、调用栈、内核日志、表内状态这条链往下查，比逐项调参数更有效；表项上限要按并发和内存一起算，调完用同一组压测参数复测。再往上的优化按协议层展开：应用改 I&#x2F;O 与工作模型，套接字按带宽乘延迟定缓冲，传输层和网络层调连接与分片参数，链路层分摊中断并合理卸载。这些方法用尽仍不够，才考虑 DPDK 或 XDP 绕过协议栈。</p>
 <p><strong>参考</strong></p>
 <ul>

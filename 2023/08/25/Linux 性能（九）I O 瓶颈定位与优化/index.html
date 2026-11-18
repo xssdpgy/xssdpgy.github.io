@@ -270,7 +270,6 @@
 
 <h2 id="await-util-与队列深度"><a href="#await-util-与队列深度" class="headerlink" title="await util 与队列深度"></a>await util 与队列深度</h2><p>判断磁盘有没有瓶颈，先看几个数的含义。<code>%util</code> 是磁盘处理 I&#x2F;O 的时间占比，超过八成通常就算有瓶颈；<code>r/s + w/s</code> 是 IOPS，<code>rkB/s + wkB/s</code> 是吞吐量，<code>r_await + w_await</code> 是响应时间，<code>aqu-sz</code> 是平均请求队列长度。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E8%84%91%E5%9B%BE.png" alt="文件系统与磁盘 I/O 性能指标脑图"></p>
-<p><em>文件系统与磁盘 I&#x2F;O 性能指标脑图</em></p>
 <p>这几个数得合起来看。使用率只统计「有没有 I&#x2F;O」，不管请求多大，所以 <code>%util</code> 到 100% 时磁盘仍可能接受新请求——这个数只描述繁忙时间占比。磁盘何时接不了新请求，要看饱和度；iostat 不直接给饱和度，拿 <code>aqu-sz</code> 或等待时间跟 fio 的基准结果比，才能估出来。</p>
 <p>请求大小也关键。数据库、小文件这类随机读写场景，IOPS 更能反映性能；多媒体这类顺序读写场景，吞吐量才更能反映。同样一块盘，4 KB 随机写和 1 MB 顺序写跑出来的 <code>%util</code> 可能都是 99%，但每请求的处理能力和队列深度会差出一大截，脱离读写类型、比例和大小去比较单个指标，很容易得出错的结论。</p>
 <p>所以要谈「磁盘够不够快」，先得有个基准值。fio 是最常用的基准测试工具，通过选项组合覆盖各种场景：<code>rw</code> 指定读写模式，read&#x2F;write 是顺序、randread&#x2F;randwrite 是随机；<code>bs</code> 设块大小；<code>ioengine</code> 选引擎，libaio 表示异步；<code>direct=1</code> 绕过系统缓存，测的是磁盘本身；<code>filename</code> 指向裸盘或文件，测裸盘会破坏上面的文件系统，事先得备份。</p>
@@ -302,7 +301,6 @@ flowchart TD
 <p><code>/proc/diskstats</code> 是 iostat 的数据源，按设备给出读写请求数、合并数、读写的字节数和耗时。iostat 把这些原始计数换算成人能读的指标，看整盘够不够用；它回答不了「是谁在读写」，这要 pidstat -d 或 iotop 补——前者给每个进程的读写速率和 iodelay，后者按 I&#x2F;O 大小排序找大户。</p>
 <p>strace 跟踪进程的系统调用，能看到 <code>openat</code>、<code>read</code>、<code>write</code> 作用在哪个文件描述符上；lsof 则把文件描述符还原成路径，两者配合才知道进程在读写哪个文件。多线程进程要加 <code>-f</code>，否则可能一条 write 都看不到。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%8C%87%E6%A0%87%E6%89%BE%E5%B7%A5%E5%85%B7%E8%A1%A8.png" alt="根据 I/O 性能指标找观测工具"></p>
-<p><em>根据 I&#x2F;O 性能指标找观测工具</em></p>
 <p>当进程在容器里、strace 又看不出问题时，filetop 和 opensnoop 从内核态跟踪读写文件和打开文件，能补上这一层。要追到块设备这一级，用 blktrace 及配套的 blkparse，看请求在 I&#x2F;O 路径各阶段的耗时。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ strace -f -T -tt -p 9085</span><br><span class="line">$ lsof -p 9085</span><br><span class="line">redis-ser 9085 ... 7w REG 8,1 8830146 2838532 /data/appendonly.aof</span><br></pre></td></tr></table></figure>
 

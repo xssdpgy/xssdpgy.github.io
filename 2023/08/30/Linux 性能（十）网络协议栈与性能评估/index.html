@@ -270,12 +270,10 @@
 
 <h2 id="网络栈的四层结构"><a href="#网络栈的四层结构" class="headerlink" title="网络栈的四层结构"></a>网络栈的四层结构</h2><p>日常说的二层、三层、四层、七层来自 OSI 七层模型，Linux 实际实现的是更实用的 TCP&#x2F;IP 四层：应用层放 HTTP、DNS 这类协议，传输层管端到端通信，网络层负责封装、寻址和路由，网络接口层处理 MAC 寻址与网卡收发。谈到七层负载均衡时，指的是 OSI 的应用层；落到协议栈上，它对应 TCP&#x2F;IP 的应用层。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-Linux%E7%BD%91%E7%BB%9C%E6%A0%88%E5%88%86%E5%B1%82.png" alt="Linux 网络栈分层结构"></p>
-<p><em>Linux 网络栈分层结构</em></p>
 <p>应用数据向下走时，每层只在前后加上固定格式的头尾：传输层加 TCP 头，网络层加 IP 头，网络接口层加帧头和帧尾，原始负载本身不改。链路能传的帧有上限，MTU 规定了 IP 包的最大尺寸，以太网默认 1500 字节。超过这个尺寸就要在网络层分片，分片越多，收发两端的重组开销越大。调 MTU 之前先看路径上有没有叠加网络，端到端任何一段不支持，调了也白调。</p>
 <p>收发过程中涉及三类缓冲区，位置容易搞混。网卡通过 DMA 交互的环形缓冲区由网卡驱动管理；网卡中断处理程序分配 <code>sk_buff</code> 承载网络帧，各层之间传递时只改指针，不反复复制数据；套接字缓冲区由应用按连接设置大小，发送数据是往里写，接收数据是从里读。这些缓冲区都在内核管理的内存里，<code>sk_buff</code>、连接跟踪等通过 slab 分配器管理，可以在 <code>/proc/slabinfo</code> 看占用。</p>
 <p>网络包的处理跨了硬中断和软中断：网卡硬中断只做最核心的读取或发送，协议栈的大部分逻辑留给软中断。每个 CPU 绑一个 <code>ksoftirqd</code> 线程处理软中断，硬中断、<code>kworker</code> 等机制一起配合，看到某个 CPU 的软中断占用高，先查网络收发是否集中在那一核。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E7%BD%91%E7%BB%9C%E5%8C%85%E6%94%B6%E5%8F%91%E4%B8%8E%E5%B0%81%E8%A3%85%E6%B5%81%E7%A8%8B.png" alt="网络包接收与发送时的逐层封装"></p>
-<p><em>网络包接收与发送时的逐层封装</em></p>
 <h2 id="千兆网卡的基准量级"><a href="#千兆网卡的基准量级" class="headerlink" title="千兆网卡的基准量级"></a>千兆网卡的基准量级</h2><p>接收方向：网卡把帧 DMA 到收包队列，硬中断触发后分配 <code>sk_buff</code>，再用软中断通知内核；链路层验合法性、认出上层协议并去掉帧头，网络层判断转发还是本机接收，传输层按源 IP、源端口、目的 IP、目的端口四元组找到套接字，把数据放进接收缓存，应用才读得到。发送方向反过来：<code>sendmsg</code> 进入套接字层，写入发送缓冲，逐层加头、查路由、按 MTU 分片，网络接口层找到下一跳 MAC 并加上帧头帧尾放进发包队列，软中断通知驱动，驱动用 DMA 发出去。</p>
 <pre class="mermaid">
 flowchart LR
@@ -296,7 +294,6 @@ flowchart LR
 <p>把量级摊开看，C10K 指的是单机一万并发连接。按 2GB 内存、千兆网卡的老配置算，每连接只要低于 200KB 内存和 100Kbit 带宽，物理资源就够，卡点在同步阻塞模型：一请求一线程，一万个线程的调度和上下文切换先撑不住。I&#x2F;O 多路复用让一个线程盯一批套接字，<code>select</code> 和 <code>poll</code> 需要轮询描述符集合，还要在用户态和内核态之间来回拷贝；<code>epoll</code> 在内核里用红黑树管理描述符，只处理有事件的那些，轮询的开销省掉了。</p>
 <p>有了多路复用，还要定工作模型。主进程初始化套接字、管理子进程，worker 进程各自处理请求，这是反向代理常见的结构；多个 worker 同时等待同一个事件会惊群，需要锁或独占选项来约束。另一种是多个进程各监听同一端口，由内核分发连接，少了应用侧抢锁这一步。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E4%B8%BB%E8%BF%9B%E7%A8%8B%E4%B8%8Eworker%E6%A8%A1%E5%9E%8B.png" alt="主进程加多个 worker 的请求处理模型"></p>
-<p><em>主进程加多个 worker 的请求处理模型</em></p>
 <p>从 C10K 到十万并发，多数情况加物理资源、沿用多路复用就能过。到一百万并发，账就变了：每个连接 16KB 内存意味着约 15GB；按两成连接活跃、每连接每秒 1KB 算，吞吐量要 1.6Gb&#x2F;s，千兆网卡接不住。文件描述符数量、连接跟踪、协议栈缓存、多队列网卡、软中断负载均衡、TSO&#x2F;GRO 这类卸载都要一起考虑。再往上到千万并发，协议栈路径本身成了负担，DPDK 跳过内核协议栈在用户态轮询收包，XDP 在包进协议栈之前处理；更多场景直接把请求分摊到多台机器，改动比单机极限优化小得多。</p>
 <h2 id="ip-与-sar-的观测"><a href="#ip-与-sar-的观测" class="headerlink" title="ip 与 sar 的观测"></a>ip 与 sar 的观测</h2><p>先看接口配置和收发统计。<code>ip -s</code> 比 <code>ifconfig</code> 给的信息更细，<code>LOWER_UP</code> 表示物理链路连通，<code>mtu</code> 是最大传输单元，RX&#x2F;TX 下的 <code>errors</code>、<code>dropped</code>、<code>overruns</code>、<code>carrier</code> 只要非零，就说明链路上有丢包或错误，得先定位这一层。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">$ ip -s addr show dev eth0</span><br><span class="line">2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc mq state UP qlen 1000</span><br><span class="line">    inet 10.240.0.30/12 brd 10.255.255.255 scope global eth0</span><br><span class="line">    RX: bytes  packets errors dropped overrun mcast</span><br><span class="line">        9542432350 40809397 0 0 0 193</span><br><span class="line">    TX: bytes  packets errors dropped carrier collsns</span><br><span class="line">        4815625265 32637658 0 0 0 0</span><br><span class="line"></span><br><span class="line">$ ethtool eth0 | grep Speed</span><br><span class="line">    Speed: 1000Mb/s</span><br></pre></td></tr></table></figure>

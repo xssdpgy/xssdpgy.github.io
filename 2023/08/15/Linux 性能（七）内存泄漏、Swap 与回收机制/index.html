@@ -273,7 +273,6 @@
 <p>应用动态分配的堆内存是匿名页（Anonymous Page），它很可能在下次还被访问，没法直接回收。Swap 就是给这类页面留的后路：把不常访问的匿名页写到磁盘，腾出内存给别人，下次访问时再换入。换出和换入合起来，等于把可用内存临时扩大了。</p>
 <p>回收什么时候启动，看剩余内存落在哪个水位。kswapd0 定期扫描，拿剩余内存 pages_free 和三个阈值比：</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6%E6%B0%B4%E4%BD%8D%E9%98%88%E5%80%BC.png" alt="kswapd 内存回收的三个水位阈值"></p>
-<p><em>kswapd 内存回收的三个水位阈值</em></p>
 <p>低于 pages_min，进程可用的内存耗尽，只剩内核能分配；落在 min 和 pages_low 之间，压力偏大，kswapd0 开始回收，直到剩余内存回到 pages_high 以上；落在 low 和 high 之间，有压力但还能满足新请求；高于 high，没有压力。pages_low 和 pages_high 由 min 推导，min 本身通过 <code>/proc/sys/vm/min_free_kbytes</code> 间接设置。</p>
 <pre class="mermaid">
 flowchart TD
@@ -287,7 +286,6 @@ flowchart TD
 
 <p>还有一层 NUMA 的影响。多处理器被划到不同 Node，每个 Node 有自己的本地内存和 DMA、NORMAL、MOVABLE 等内存域，水位是按 Node、按 Zone 分别算的。所以会出现整机剩余内存还很多、某个 Node 却开始 Swap 的情况——查水位得按 Node 看，不能只看全局。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-NUMA%E6%9E%B6%E6%9E%84%E5%86%85%E5%AD%98%E5%9F%9F.png" alt="NUMA 架构下每 Node 的本地内存与内存域"></p>
-<p><em>NUMA 架构下每 Node 的本地内存与内存域</em></p>
 <p>文件页和匿名页先回收谁，由 <code>/proc/sys/vm/swappiness</code> 决定，取值 0 到 100：数值越大越积极换出匿名页，越小越倾向回收文件页。这个数是权重，不是百分比，设成 0 也不代表绝不 Swap。</p>
 <h2 id="从内存增长到泄漏点"><a href="#从内存增长到泄漏点" class="headerlink" title="从内存增长到泄漏点"></a>从内存增长到泄漏点</h2><p>内存泄漏的判据是趋势，不是某一刻的占用。用一个每秒算一次斐波那契数的程序做例子：跑起来后盯着 free 那一列，它持续下降，buff&#x2F;cache 基本不动，说明系统用在别处的内存一直在涨。但这还不能断定是泄漏——程序用一个不断增长的数组缓存结果，也会看到同样的曲线。</p>
 <p>要往下走一步，得看分配和释放是否配对。堆内存由应用自己调 <code>free()</code> 回收，共享内存分配后忘了释放，后果和堆泄漏一样；栈内存由系统自动管理，只读段和数据段大小固定，这两类不会泄漏。</p>
@@ -309,7 +307,6 @@ flowchart TD
 
 <p>Swap 换出的是 dockerd 这类进程的内存，它们再访问时就会慢。整条链从 Swap 升高出发，用 sar 看趋势、cachetop 找缓存来源、zoneinfo 解释回收、VmSwap 定位受影响的进程。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E6%B5%81%E7%A8%8B%E5%9B%BE.png" alt="内存问题排查的工具流程图"></p>
-<p><em>内存问题排查的工具流程图</em></p>
 <h2 id="Swap-与泄漏的处理边界"><a href="#Swap-与泄漏的处理边界" class="headerlink" title="Swap 与泄漏的处理边界"></a>Swap 与泄漏的处理边界</h2><p>找到来源之后，处置也要讲条件。几种常见的走偏：</p>
 <ol>
 <li><strong>见 Swap 升高就关掉</strong>。Swap 升高只是内存紧张的结果，先查是谁在涨、回收为什么不回收文件页；直接关掉，压力会转移到 OOM，核心进程可能被杀。</li>

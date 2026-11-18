@@ -246,7 +246,7 @@
                 <i class="far fa-file-word"></i>
               </span>
                 <span class="post-meta-item-text">本文字数：</span>
-              <span>4.1k</span>
+              <span>4k</span>
             </span>
             <span class="post-meta-item" title="阅读时长">
               <span class="post-meta-item-icon">
@@ -270,14 +270,11 @@
 
 <h2 id="内存的工作原理"><a href="#内存的工作原理" class="headerlink" title="内存的工作原理"></a>内存的工作原理</h2><p>进程能直接碰到的是内核给它的一块连续虚拟地址空间，物理内存要经映射才能访问。空间分内核段和用户段，进程在用户态只能访问用户空间，进了内核态才能访问内核空间；虽然每个进程都带着内核空间，但那里映射的是同一份物理内存。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E8%99%9A%E6%8B%9F%E5%9C%B0%E5%9D%80%E7%A9%BA%E9%97%B4%E5%88%86%E5%B8%83.png" alt="32 位与 64 位系统的虚拟地址空间分布"></p>
-<p><em>32 位与 64 位系统的虚拟地址空间分布</em></p>
 <p>所有进程的虚拟内存加起来远超物理内存，但真正用到的才分配物理页。虚拟地址到物理地址的对应关系记在页表里，由 MMU 负责转换；查不到时触发缺页异常，内核分配物理页、更新页表，再回到用户态继续跑。页表放在 MMU 里，还有一层更快的缓存 TLB，缓存的就是它——这正是减少上下文切换能提升内存访问速度的原因：切换少了，TLB 刷新就少。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E9%A1%B5%E8%A1%A8%E6%98%A0%E5%B0%84%E5%8E%9F%E7%90%86.png" alt="虚拟地址经页表映射到物理地址"></p>
-<p><em>虚拟地址经页表映射到物理地址</em></p>
 <p>映射的最小单位是页，通常 4 KB。页太小带来页表项暴涨——光 32 位系统映射 4 GB 空间就要一百多万个页表项——于是有了多级页表和 HugePage：前者只保存用得到的区块，后者用 2 MB 或 1 GB 的大页，给 Oracle、DPDK 这类吃大内存的程序用。缺页也不全是坏事，malloc 之后内存要等首次访问才真正分配，靠的就是这个机制；但频繁分配大块内存会让缺页异常堆积，内核花在维护页表上的时间跟着涨，这就是大块内存走 mmap 也让内核负担变重的原因之一。</p>
 <p>用户空间从低到高又分五段：只读段放代码和常量，数据段放全局变量，堆从低地址往上长，文件映射段从高地址往下长，栈放局部变量和调用上下文，大小固定。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E8%BF%9B%E7%A8%8B%E7%94%A8%E6%88%B7%E7%A9%BA%E9%97%B4%E5%86%85%E5%AD%98%E6%AE%B5.png" alt="进程用户空间的五个内存段分布"></p>
-<p><em>进程用户空间的五个内存段分布</em></p>
 <p><code>malloc()</code> 分配小块走 brk 移动堆顶，释放后缓存起来复用，快但容易攒碎片；大块走 mmap 在文件映射段申请，释放即归还，代价是每次都要缺页。内存紧张时，内核依次回收缓存、把不常访问的内存换到 Swap、实在不行用 OOM 杀掉评分最高的进程。</p>
 <p>回收缓存时绕不开 free 里的 buff&#x2F;cache 一列，它是 Buffer 和 Cache 的总和。两者定义查 <code>man free</code> 只看到来源，再查 <code>man proc</code> 才清楚：Buffers 是磁盘块的临时缓存，通常 20 MB 上下；Cache 是从文件读取的页缓存；SReclaimable 是 Slab 中可回收的那部分。</p>
 <p>口径容易记反，用 dd 做四个场景就能分清。清掉缓存后写一个 500 MB 的普通文件，观察到的是 Cache 一路上涨、Buffer 几乎不动；改向裸磁盘分区写 2 GB，Buffer 涨得比 Cache 快得多。读也一样：读文件 Cache 涨、Buffer 不动，读裸磁盘分区则 Buffer 涨得快。</p>

@@ -247,7 +247,7 @@
                 <i class="far fa-file-word"></i>
               </span>
                 <span class="post-meta-item-text">本文字数：</span>
-              <span>3.6k</span>
+              <span>3.5k</span>
             </span>
             <span class="post-meta-item" title="阅读时长">
               <span class="post-meta-item-icon">
@@ -272,7 +272,6 @@
 <h2 id="动态追踪的事件源"><a href="#动态追踪的事件源" class="headerlink" title="动态追踪的事件源"></a>动态追踪的事件源</h2><p>动态追踪在系统正常运行时通过探针采集行为，不用改代码、不用重启服务。事件源分三类：硬件事件来自性能监控计数器，覆盖缓存、指令周期、分支预测；静态探针事先写进代码，常见的有内核跟踪点和用户态的 USDT；动态探针在运行时挂到函数入口或返回处，内核侧叫 kprobes，用户态叫 uprobes。</p>
 <p>USDT 要求应用自己埋点，数据库类软件常内置；kprobes 与 uprobes 可以在运行时挂到任意函数，灵活性更高，代价是要拿到符号。工具建立在探针之上。<code>ftrace</code> 通过 <code>/sys/kernel/debug/tracing</code> 下的文件交互，<code>function_graph</code> 能给出调用关系；<code>perf</code> 采样事件，也能用 <code>perf probe</code> 加自定义探针；<code>eBPF</code> 在内核里跑自定义程序，<code>BCC</code> 把编译和加载包装成 Python 接口；<code>SystemTap</code> 把脚本编译成内核模块再插入；<code>sysdig</code> 面向容器场景。多数性能问题用 <code>perf</code> 加火焰图就够，需要按 I&#x2F;O 大小这类维度做统计时再写脚本。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E5%9C%BA%E6%99%AF%E4%B8%8E%E5%B7%A5%E5%85%B7.png" alt="常见动态追踪场景与推荐工具"></p>
-<p><em>常见动态追踪场景与推荐工具</em></p>
 <h2 id="容器冷启动的等待分布"><a href="#容器冷启动的等待分布" class="headerlink" title="容器冷启动的等待分布"></a>容器冷启动的等待分布</h2><p>一个容器化应用启动后，客户端先收到连接重置，等待二十多秒才拿到一次响应，随后容器退出。<code>docker logs</code> 里只有启动完成的记录，看不出原因；<code>docker inspect</code> 显示 <code>OOMKilled</code> 为真、退出码 137。内核日志进一步指出，OOM 发生在 cgroup 内存限制处：容器限额 512 MB，进程匿名内存加页内存已经顶到 524 MB。</p>
 <p>再看 JVM 的堆设置，最大堆接近 2 GB。容器内部看到的可用内存仍是主机规格，运行时按主机内存推算堆上限，和 cgroup 限额对不上。显式给堆设置与容器限额一致的上限后，应用能稳定响应。这里的判断依据是容器边界：限额写在外层，进程看到的是另一套数字。</p>
 <p>启动仍然要二十多秒。<code>top</code> 里 CPU 总体空闲，java 进程只占一成；在启动过程中用 <code>pidstat -t</code> 看线程，部分线程的等待列接近 97%，CPU 使用列却很低。容器的 CPU 份额被设成 0.1 个核，线程大量时间耗在等调度。把份额提到一个核，同样的应用两秒启动完成。去掉限额能让容器跑得更快，代价是任何应用异常都可能拖垮整机，这个交换通常不划算。</p>
@@ -291,12 +290,9 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ ps -f --ppid 2 -p 2</span><br><span class="line">$ top</span><br><span class="line">$ perf record -a -g -p 9 -- <span class="built_in">sleep</span> 30</span><br><span class="line">$ perf report -g graph,0</span><br><span class="line">$ perf script -i /root/perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl &gt; ksoftirqd.svg</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-ksoftirqd%E7%81%AB%E7%84%B0%E5%9B%BE.png" alt="ksoftirqd 采样生成的 CPU 火焰图"></p>
-<p><em>ksoftirqd 采样生成的 CPU 火焰图</em></p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%86%85%E6%A0%B8%E7%BA%BF%E7%A8%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="服务端与压测客户端的实验拓扑"></p>
-<p><em>服务端与压测客户端的实验拓扑</em></p>
 <p>火焰图从下往上看，下面一层是上面一层的父调用；同一层按函数名排序，宽度对应采样占比。展开最宽的那条路径，能看到收包、网桥、Netfilter 到转发的连续调用，其余小火焰里还有 TCP 与连接跟踪的函数。报告里的热点调用链从 <code>net_rx_action</code>、<code>netif_receive_skb</code> 到 <code>br_handle_frame</code>、<code>br_nf_pre_routing</code>，再经 <code>br_pass_frame_up</code> 到 <code>ip_forward</code>。收包、网桥、Netfilter 钩子连在一起，对应容器网络经 veth 到 docker0 网桥的路径；结合压测端发出的 SYN 小包，软中断升高就有了具体来源。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-Docker%E7%BD%91%E6%A1%A5%E4%B8%8EDNAT%E8%B7%AF%E5%BE%84.png" alt="容器、veth、docker0 网桥与 DNAT 规则的位置"></p>
-<p><em>容器、veth、docker0 网桥与 DNAT 规则的位置</em></p>
 <p>需要看某个函数的参数或返回值时，用 <code>perf probe</code> 挂动态探针；<code>perf trace</code> 提供系统调用视图，走的是内核事件，开销比基于 ptrace 的 <code>strace</code> 小。<code>ftrace</code> 的五步操作可以用 <code>trace-cmd</code> 收成两条命令。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">$ perf probe --add <span class="string">&#x27;do_sys_open filename:string&#x27;</span></span><br><span class="line">$ perf record -e probe:do_sys_open -aR <span class="built_in">ls</span></span><br><span class="line">$ perf script</span><br><span class="line">$ perf probe --del probe:do_sys_open</span><br><span class="line">$ <span class="built_in">cd</span> /sys/kernel/debug/tracing</span><br><span class="line">$ trace-cmd record -p function_graph -g do_sys_open -O funcgraph-proc <span class="built_in">ls</span></span><br></pre></td></tr></table></figure>
 

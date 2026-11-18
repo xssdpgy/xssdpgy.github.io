@@ -270,11 +270,9 @@
 
 <h2 id="CPU-指标的分类"><a href="#CPU-指标的分类" class="headerlink" title="CPU 指标的分类"></a>CPU 指标的分类</h2><p>先把要看的东西分个类。CPU 性能口径说到底就四组：使用率、上下文切换、平均负载、缓存命中率。使用率再往下拆成用户态、系统态、等待 I&#x2F;O、软中断和硬中断，虚拟化环境里还有窃取和客户两类。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-CPU%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png" alt="CPU 性能指标分类脑图"></p>
-<p><em>CPU 性能指标分类脑图</em></p>
 <p>这些口径不是并列的孤立项，各自指向不同的层。用户 CPU 高，说明应用在用户态忙着算；系统 CPU 高，是内核态的事，比如频繁系统调用；iowait 高，CPU 其实在等硬件返回。把它们分开看，排查范围一下就缩小了——用户 CPU 高就别往内核态翻，iowait 高就别只盯进程列表。平均负载数的那三个值，是过去 1、5、15 分钟的平均活跃进程数，理想情况跟逻辑 CPU 个数相等。缓存命中率衡量的是 CPU 多级缓存的复用情况，L1、L2 在单核，L3 多核共享，命中率越低，CPU 等内存的时间越多。</p>
 <h2 id="三工具的指标关联"><a href="#三工具的指标关联" class="headerlink" title="三工具的指标关联"></a>三工具的指标关联</h2><p>指标知道怎么看，接下来是拿什么看。工具很多，真正常用的就那么几个，其中 top、vmstat、pidstat 三个覆盖面最广：top 给出各种使用率和僵尸进程、平均负载，vmstat 给出上下文切换次数、中断次数和运行&#x2F;不可中断进程数，pidstat 补上进程级的用户 CPU、系统 CPU 和两类切换。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-%E4%B8%89%E5%B7%A5%E5%85%B7%E6%8C%87%E6%A0%87%E5%85%B3%E8%81%94%E5%9B%BE.png" alt="top、vmstat、pidstat 三工具的 CPU 指标关联图"></p>
-<p><em>top、vmstat、pidstat 三工具的 CPU 指标关联图</em></p>
 <p>这张图更该当成一张路线图来读。虚线是指标之间的关联，也是下一步的方向。top 的用户 CPU 升高，就拿 pidstat 按进程对齐，找出是哪个进程在占；找到进程后再用 perf 看调用链、strace 看系统调用。top 的平均负载升高，对照 vmstat 的运行态和不可中断进程数：不可中断那一列涨了，转去查 I&#x2F;O，用 dstat、sar；运行态那一列涨了，回到 top 和 pidstat 找进程。top 的软中断高，查 <code>/proc/softirqs</code> 定类型，是网络接收就接 sar 和 tcpdump。</p>
 <pre class="mermaid">
 flowchart TD

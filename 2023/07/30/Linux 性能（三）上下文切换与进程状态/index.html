@@ -247,7 +247,7 @@
                 <i class="far fa-file-word"></i>
               </span>
                 <span class="post-meta-item-text">本文字数：</span>
-              <span>6.2k</span>
+              <span>6.1k</span>
             </span>
             <span class="post-meta-item" title="阅读时长">
               <span class="post-meta-item-icon">
@@ -271,15 +271,12 @@
 
 <h2 id="CPU-上下文切换"><a href="#CPU-上下文切换" class="headerlink" title="CPU 上下文切换"></a>CPU 上下文切换</h2><p>先把计量单位说清楚。CPU 要运行一个任务，得知道它从哪里加载、从哪里开始执行，这些信息放在一组寄存器和程序计数器（PC）里，合起来叫 CPU 上下文。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-CPU%E5%AF%84%E5%AD%98%E5%99%A8%E4%B8%8E%E7%A8%8B%E5%BA%8F%E8%AE%A1%E6%95%B0%E5%99%A8%E7%BB%93%E6%9E%84.png" alt="CPU 寄存器与程序计数器结构"></p>
-<p><em>CPU 寄存器与程序计数器结构</em></p>
 <p>切换的过程是：把当前任务的寄存器和 PC 存进内核，再把下一个任务存的那份装回来，最后跳到新的 PC 继续跑。存和装都要内核在 CPU 上执行指令，这段时间是真实花掉的，任务本身没往前推进。一次切换几十纳秒到几微秒，看着不起眼，每秒几万次就成了一笔可观的开销。</p>
 <p>任务不止进程这一种，切换也分三种。进程切换要换虚拟内存、栈、全局变量，连内核栈和寄存器一起换，代价最大；同进程的线程切换共享虚拟内存，只换栈和寄存器，便宜一些；中断切换只动内核态那点现场，连用户态都不碰，最轻。中断处理优先级比进程高，同一个 CPU 上不会和进程切换同时发生。</p>
 <p>系统调用容易和进程切换搞混。调用 read 时，用户态的指令位置先存起来，寄存器换成内核态的入口，返回时再换回来，一次调用走两遍这个过程。但自始至终是同一个进程，虚拟内存没换，所以严格说这叫特权模式切换。它确实改了寄存器，只是不算进程上下文切换。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-CPU%E7%89%B9%E6%9D%83%E7%AD%89%E7%BA%A7Ring%E5%88%92%E5%88%86.png" alt="CPU 特权等级 Ring 划分"></p>
-<p><em>CPU 特权等级 Ring 划分</em></p>
 <p>进程为什么能在两种状态间来回切，靠的是特权等级：内核跑在 Ring 0 能访问所有资源，应用跑在 Ring 3，想碰硬件就得通过系统调用陷进内核。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-%E8%BF%9B%E7%A8%8B%E4%B8%8A%E4%B8%8B%E6%96%87%E5%88%87%E6%8D%A2%E7%A4%BA%E6%84%8F%E5%9B%BE.png" alt="进程上下文切换示意图"></p>
-<p><em>进程上下文切换示意图</em></p>
 <p>进程什么时候会被换下 CPU：时间片用完、等资源（比如内存不够）、主动 sleep、来了更高优先级的进程、硬件中断打断。这五种场景里，只有第一种和第四种属于被强制调度，其余是进程自己让出或者外部事件插入。记住这个区分，下面看自愿和非自愿两列时才有依据。</p>
 <h2 id="vmstat-命令分析上下文切换"><a href="#vmstat-命令分析上下文切换" class="headerlink" title="vmstat 命令分析上下文切换"></a>vmstat 命令分析上下文切换</h2><p>系统整体每秒切多少次，看 vmstat 的 cs 列；每秒中断多少次，看 in 列；r 是就绪队列长度，b 是不可中断状态的进程数。这四个数放在一行里，能先圈定大问题在哪。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 每 1 秒输出一组，观察 cs / in / r / b</span></span><br><span class="line">vmstat 1</span><br></pre></td></tr></table></figure>
@@ -328,7 +325,6 @@ graph TD
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">perf record -g</span><br><span class="line">perf report</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-%E7%9B%B4%E6%8E%A5IO%E7%9A%84perf%E8%B0%83%E7%94%A8%E6%A0%88.png" alt="直接 I/O 的 perf 调用栈"></p>
-<p><em>直接 I&#x2F;O 的 perf 调用栈</em></p>
 <p>调用栈里 app 的 0.64% 采样落在 sys_read → new_sync_read → blkdev_direct_IO，这条路径说明是绕过系统缓存的直接读。查源码，打开文件用了 O_DIRECT 选项：</p>
 <figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">open(disk, O_RDONLY | O_DIRECT | O_LARGEFILE, <span class="number">0755</span>)</span><br></pre></td></tr></table></figure>
 

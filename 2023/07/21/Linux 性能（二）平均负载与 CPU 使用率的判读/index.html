@@ -330,7 +330,6 @@ graph TD
 <p>图里每个分支都对应一类能观测的数，先确认落在哪支，再谈优化。拿「4.2 超过 4 核」直接去调内核参数，Skip 了归因这一步，改完也说不清有没有用。</p>
 <h2 id="uptime-与-mpstat-命令"><a href="#uptime-与-mpstat-命令" class="headerlink" title="uptime 与 mpstat 命令"></a>uptime 与 mpstat 命令</h2><p>CPU 使用率来自 &#x2F;proc&#x2F;stat 里的节拍计数。这些数是开机以来的累计值，拿单次读数算出来的是开机至今的平均值，参考价值有限。工具的做法是隔几秒取两次快照做差，得到这段时间的使用率。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-CPU%E4%BD%BF%E7%94%A8%E7%8E%87%E4%B8%A4%E6%AC%A1%E5%BF%AB%E7%85%A7%E5%85%AC%E5%BC%8F.png" alt="CPU 使用率的两次快照差值公式"></p>
-<p><em>CPU 使用率的两次快照差值公式</em></p>
 <blockquote>
 <p>性能分析工具给出的都是间隔一段时间的平均 CPU 使用率，所以要注意间隔时间的设置，特别是用多个工具对比分析时，你一定要保证它们用的是相同的间隔时间。</p>
 </blockquote>
@@ -351,7 +350,6 @@ graph TD
 <li><strong>看 all 那一行就收工</strong>。每核分布被平均值抹平，一个核跑满、一个核在等 I&#x2F;O，all 行可能看起来波澜不惊。</li>
 </ol>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-%E7%9F%AD%E6%97%B6%E8%BF%9B%E7%A8%8Bperf%E9%87%87%E6%A0%B7%E6%8A%A5%E5%91%8A.png" alt="短时 stress 进程的 perf 采样报告"></p>
-<p><em>短时 stress 进程的 perf 采样报告</em></p>
 <p>短时进程这类问题，先用 pstree 看父子关系，确认是谁在反复拉起子进程；再上 execsnoop 盯 exec 调用，它按事件抓，不会像 top 那样漏掉活了几毫秒的进程。perf record 采样能做最后确认——图里 stress 占了 77% 的 CPU 时钟，热点落在随机数生成上，和 top 里「找不到进程」是同一件事的两面。</p>
 <table>
 <thead>

@@ -2794,7 +2794,6 @@ classDiagram
 <p>性能问题的本质，就是系统资源已经达到瓶颈，但请求的处理却还不够快，无法支撑更多的请求。</p>
 </blockquote>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E8%B5%84%E6%BA%90%E8%A7%86%E8%A7%92%E4%B8%8E%E5%BA%94%E7%94%A8%E8%B4%9F%E8%BD%BD%E8%A7%86%E8%A7%92.png" alt="资源视角与应用负载视角"></p>
-<p><em>资源视角与应用负载视角</em></p>
 <p>应用侧的数和资源侧的数，中间隔着传导关系：</p>
 <pre class="mermaid">
 graph LR
@@ -2970,7 +2969,6 @@ graph TD
 
 <p>图里每个分支都挂着一个能观测的数，看完没变化就划掉，换下一条假设。指标涨没涨得有参照，前面两轮基线就是拿来当这个参照的。</p>
 <h2 id="指标采集命令"><a href="#指标采集命令" class="headerlink" title="指标采集命令"></a>指标采集命令</h2><p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-Linux%E6%80%A7%E8%83%BD%E5%B7%A5%E5%85%B7%E9%80%9F%E6%9F%A5%E5%9B%BE.png" alt="Linux 性能工具速查图"></p>
-<p><em>Linux 性能工具速查图</em></p>
 <p>这张速查表的用处很窄：知道要看哪个指标，想不起该敲哪条命令时翻一下。命令已经记得，直接查手册更快。</p>
 <blockquote>
 <p>只有当你想了解某个性能指标，却不知道该怎么办的时候，才会想到「要是有一个性能工具速查表就好了」。</p>
@@ -2985,7 +2983,6 @@ graph TD
 
 <p>手工敲命令看的是这一秒，单机临时排查够用；瓶颈往往是过去几分钟攒出来的，长期还得靠按时间采样的监控数据，命令留给验证假设。另外 <code>/proc</code> 里多数数值是开机以来的累计计数，使用率得取两次快照做差，拿累计值当百分比会差出好几倍。</p>
 <h2 id="平均值的误读"><a href="#平均值的误读" class="headerlink" title="平均值的误读"></a>平均值的误读</h2><p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E4%BB%8E%E6%8C%87%E6%A0%87%E5%88%B0%E5%B7%A5%E5%85%B7%E7%9A%84%E6%8E%92%E6%9F%A5%E8%B7%AF%E5%BE%84.png" alt="从指标到工具的排查路径"></p>
-<p><em>从指标到工具的排查路径</em></p>
 <ol>
 <li><strong>用平均响应时间验收</strong>。上面那组数里 P99 已经 800 毫秒，平均值可能只有 70 毫秒，报告写「平均 70ms，达标」，等了将近 1 秒的那批用户就不见了。SLO 得绑分位值，平均值留着看趋势。</li>
 <li><strong>CPU 没跑满就判机器没问题</strong>。等待也可能发生在块设备、网络、应用锁或者内存回收上。30% 只排除了算力耗尽这一条。</li>
@@ -3113,7 +3110,6 @@ graph TD
 <p>应用动态分配的堆内存是匿名页（Anonymous Page），它很可能在下次还被访问，没法直接回收。Swap 就是给这类页面留的后路：把不常访问的匿名页写到磁盘，腾出内存给别人，下次访问时再换入。换出和换入合起来，等于把可用内存临时扩大了。</p>
 <p>回收什么时候启动，看剩余内存落在哪个水位。kswapd0 定期扫描，拿剩余内存 pages_free 和三个阈值比：</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6%E6%B0%B4%E4%BD%8D%E9%98%88%E5%80%BC.png" alt="kswapd 内存回收的三个水位阈值"></p>
-<p><em>kswapd 内存回收的三个水位阈值</em></p>
 <p>低于 pages_min，进程可用的内存耗尽，只剩内核能分配；落在 min 和 pages_low 之间，压力偏大，kswapd0 开始回收，直到剩余内存回到 pages_high 以上；落在 low 和 high 之间，有压力但还能满足新请求；高于 high，没有压力。pages_low 和 pages_high 由 min 推导，min 本身通过 <code>/proc/sys/vm/min_free_kbytes</code> 间接设置。</p>
 <pre class="mermaid">
 flowchart TD
@@ -3127,7 +3123,6 @@ flowchart TD
 
 <p>还有一层 NUMA 的影响。多处理器被划到不同 Node，每个 Node 有自己的本地内存和 DMA、NORMAL、MOVABLE 等内存域，水位是按 Node、按 Zone 分别算的。所以会出现整机剩余内存还很多、某个 Node 却开始 Swap 的情况——查水位得按 Node 看，不能只看全局。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-NUMA%E6%9E%B6%E6%9E%84%E5%86%85%E5%AD%98%E5%9F%9F.png" alt="NUMA 架构下每 Node 的本地内存与内存域"></p>
-<p><em>NUMA 架构下每 Node 的本地内存与内存域</em></p>
 <p>文件页和匿名页先回收谁，由 <code>/proc/sys/vm/swappiness</code> 决定，取值 0 到 100：数值越大越积极换出匿名页，越小越倾向回收文件页。这个数是权重，不是百分比，设成 0 也不代表绝不 Swap。</p>
 <h2 id="从内存增长到泄漏点"><a href="#从内存增长到泄漏点" class="headerlink" title="从内存增长到泄漏点"></a>从内存增长到泄漏点</h2><p>内存泄漏的判据是趋势，不是某一刻的占用。用一个每秒算一次斐波那契数的程序做例子：跑起来后盯着 free 那一列，它持续下降，buff&#x2F;cache 基本不动，说明系统用在别处的内存一直在涨。但这还不能断定是泄漏——程序用一个不断增长的数组缓存结果，也会看到同样的曲线。</p>
 <p>要往下走一步，得看分配和释放是否配对。堆内存由应用自己调 <code>free()</code> 回收，共享内存分配后忘了释放，后果和堆泄漏一样；栈内存由系统自动管理，只读段和数据段大小固定，这两类不会泄漏。</p>
@@ -3149,7 +3144,6 @@ flowchart TD
 
 <p>Swap 换出的是 dockerd 这类进程的内存，它们再访问时就会慢。整条链从 Swap 升高出发，用 sar 看趋势、cachetop 找缓存来源、zoneinfo 解释回收、VmSwap 定位受影响的进程。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E6%B5%81%E7%A8%8B%E5%9B%BE.png" alt="内存问题排查的工具流程图"></p>
-<p><em>内存问题排查的工具流程图</em></p>
 <h2 id="Swap-与泄漏的处理边界"><a href="#Swap-与泄漏的处理边界" class="headerlink" title="Swap 与泄漏的处理边界"></a>Swap 与泄漏的处理边界</h2><p>找到来源之后，处置也要讲条件。几种常见的走偏：</p>
 <ol>
 <li><strong>见 Swap 升高就关掉</strong>。Swap 升高只是内存紧张的结果，先查是谁在涨、回收为什么不回收文件页；直接关掉，压力会转移到 OOM，核心进程可能被杀。</li>
@@ -3229,15 +3223,12 @@ flowchart TD
 
 <h2 id="CPU-上下文切换"><a href="#CPU-上下文切换" class="headerlink" title="CPU 上下文切换"></a>CPU 上下文切换</h2><p>先把计量单位说清楚。CPU 要运行一个任务，得知道它从哪里加载、从哪里开始执行，这些信息放在一组寄存器和程序计数器（PC）里，合起来叫 CPU 上下文。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-CPU%E5%AF%84%E5%AD%98%E5%99%A8%E4%B8%8E%E7%A8%8B%E5%BA%8F%E8%AE%A1%E6%95%B0%E5%99%A8%E7%BB%93%E6%9E%84.png" alt="CPU 寄存器与程序计数器结构"></p>
-<p><em>CPU 寄存器与程序计数器结构</em></p>
 <p>切换的过程是：把当前任务的寄存器和 PC 存进内核，再把下一个任务存的那份装回来，最后跳到新的 PC 继续跑。存和装都要内核在 CPU 上执行指令，这段时间是真实花掉的，任务本身没往前推进。一次切换几十纳秒到几微秒，看着不起眼，每秒几万次就成了一笔可观的开销。</p>
 <p>任务不止进程这一种，切换也分三种。进程切换要换虚拟内存、栈、全局变量，连内核栈和寄存器一起换，代价最大；同进程的线程切换共享虚拟内存，只换栈和寄存器，便宜一些；中断切换只动内核态那点现场，连用户态都不碰，最轻。中断处理优先级比进程高，同一个 CPU 上不会和进程切换同时发生。</p>
 <p>系统调用容易和进程切换搞混。调用 read 时，用户态的指令位置先存起来，寄存器换成内核态的入口，返回时再换回来，一次调用走两遍这个过程。但自始至终是同一个进程，虚拟内存没换，所以严格说这叫特权模式切换。它确实改了寄存器，只是不算进程上下文切换。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-CPU%E7%89%B9%E6%9D%83%E7%AD%89%E7%BA%A7Ring%E5%88%92%E5%88%86.png" alt="CPU 特权等级 Ring 划分"></p>
-<p><em>CPU 特权等级 Ring 划分</em></p>
 <p>进程为什么能在两种状态间来回切，靠的是特权等级：内核跑在 Ring 0 能访问所有资源，应用跑在 Ring 3，想碰硬件就得通过系统调用陷进内核。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-%E8%BF%9B%E7%A8%8B%E4%B8%8A%E4%B8%8B%E6%96%87%E5%88%87%E6%8D%A2%E7%A4%BA%E6%84%8F%E5%9B%BE.png" alt="进程上下文切换示意图"></p>
-<p><em>进程上下文切换示意图</em></p>
 <p>进程什么时候会被换下 CPU：时间片用完、等资源（比如内存不够）、主动 sleep、来了更高优先级的进程、硬件中断打断。这五种场景里，只有第一种和第四种属于被强制调度，其余是进程自己让出或者外部事件插入。记住这个区分，下面看自愿和非自愿两列时才有依据。</p>
 <h2 id="vmstat-命令分析上下文切换"><a href="#vmstat-命令分析上下文切换" class="headerlink" title="vmstat 命令分析上下文切换"></a>vmstat 命令分析上下文切换</h2><p>系统整体每秒切多少次，看 vmstat 的 cs 列；每秒中断多少次，看 in 列；r 是就绪队列长度，b 是不可中断状态的进程数。这四个数放在一行里，能先圈定大问题在哪。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 每 1 秒输出一组，观察 cs / in / r / b</span></span><br><span class="line">vmstat 1</span><br></pre></td></tr></table></figure>
@@ -3286,7 +3277,6 @@ graph TD
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">perf record -g</span><br><span class="line">perf report</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-03-%E7%9B%B4%E6%8E%A5IO%E7%9A%84perf%E8%B0%83%E7%94%A8%E6%A0%88.png" alt="直接 I/O 的 perf 调用栈"></p>
-<p><em>直接 I&#x2F;O 的 perf 调用栈</em></p>
 <p>调用栈里 app 的 0.64% 采样落在 sys_read → new_sync_read → blkdev_direct_IO，这条路径说明是绕过系统缓存的直接读。查源码，打开文件用了 O_DIRECT 选项：</p>
 <figure class="highlight c"><table><tr><td class="code"><pre><span class="line">open(disk, O_RDONLY | O_DIRECT | O_LARGEFILE, <span class="number">0755</span>)</span><br></pre></td></tr></table></figure>
 
@@ -3376,7 +3366,6 @@ graph TD
 
 <h2 id="await-util-与队列深度"><a href="#await-util-与队列深度" class="headerlink" title="await util 与队列深度"></a>await util 与队列深度</h2><p>判断磁盘有没有瓶颈，先看几个数的含义。<code>%util</code> 是磁盘处理 I&#x2F;O 的时间占比，超过八成通常就算有瓶颈；<code>r/s + w/s</code> 是 IOPS，<code>rkB/s + wkB/s</code> 是吞吐量，<code>r_await + w_await</code> 是响应时间，<code>aqu-sz</code> 是平均请求队列长度。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E8%84%91%E5%9B%BE.png" alt="文件系统与磁盘 I/O 性能指标脑图"></p>
-<p><em>文件系统与磁盘 I&#x2F;O 性能指标脑图</em></p>
 <p>这几个数得合起来看。使用率只统计「有没有 I&#x2F;O」，不管请求多大，所以 <code>%util</code> 到 100% 时磁盘仍可能接受新请求——这个数只描述繁忙时间占比。磁盘何时接不了新请求，要看饱和度；iostat 不直接给饱和度，拿 <code>aqu-sz</code> 或等待时间跟 fio 的基准结果比，才能估出来。</p>
 <p>请求大小也关键。数据库、小文件这类随机读写场景，IOPS 更能反映性能；多媒体这类顺序读写场景，吞吐量才更能反映。同样一块盘，4 KB 随机写和 1 MB 顺序写跑出来的 <code>%util</code> 可能都是 99%，但每请求的处理能力和队列深度会差出一大截，脱离读写类型、比例和大小去比较单个指标，很容易得出错的结论。</p>
 <p>所以要谈「磁盘够不够快」，先得有个基准值。fio 是最常用的基准测试工具，通过选项组合覆盖各种场景：<code>rw</code> 指定读写模式，read&#x2F;write 是顺序、randread&#x2F;randwrite 是随机；<code>bs</code> 设块大小；<code>ioengine</code> 选引擎，libaio 表示异步；<code>direct=1</code> 绕过系统缓存，测的是磁盘本身；<code>filename</code> 指向裸盘或文件，测裸盘会破坏上面的文件系统，事先得备份。</p>
@@ -3408,7 +3397,6 @@ flowchart TD
 <p><code>/proc/diskstats</code> 是 iostat 的数据源，按设备给出读写请求数、合并数、读写的字节数和耗时。iostat 把这些原始计数换算成人能读的指标，看整盘够不够用；它回答不了「是谁在读写」，这要 pidstat -d 或 iotop 补——前者给每个进程的读写速率和 iodelay，后者按 I&#x2F;O 大小排序找大户。</p>
 <p>strace 跟踪进程的系统调用，能看到 <code>openat</code>、<code>read</code>、<code>write</code> 作用在哪个文件描述符上；lsof 则把文件描述符还原成路径，两者配合才知道进程在读写哪个文件。多线程进程要加 <code>-f</code>，否则可能一条 write 都看不到。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%8C%87%E6%A0%87%E6%89%BE%E5%B7%A5%E5%85%B7%E8%A1%A8.png" alt="根据 I/O 性能指标找观测工具"></p>
-<p><em>根据 I&#x2F;O 性能指标找观测工具</em></p>
 <p>当进程在容器里、strace 又看不出问题时，filetop 和 opensnoop 从内核态跟踪读写文件和打开文件，能补上这一层。要追到块设备这一级，用 blktrace 及配套的 blkparse，看请求在 I&#x2F;O 路径各阶段的耗时。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ strace -f -T -tt -p 9085</span><br><span class="line">$ lsof -p 9085</span><br><span class="line">redis-ser 9085 ... 7w REG 8,1 8830146 2838532 /data/appendonly.aof</span><br></pre></td></tr></table></figure>
 
@@ -3558,7 +3546,6 @@ graph TD
 <p>图里每个分支都对应一类能观测的数，先确认落在哪支，再谈优化。拿「4.2 超过 4 核」直接去调内核参数，Skip 了归因这一步，改完也说不清有没有用。</p>
 <h2 id="uptime-与-mpstat-命令"><a href="#uptime-与-mpstat-命令" class="headerlink" title="uptime 与 mpstat 命令"></a>uptime 与 mpstat 命令</h2><p>CPU 使用率来自 &#x2F;proc&#x2F;stat 里的节拍计数。这些数是开机以来的累计值，拿单次读数算出来的是开机至今的平均值，参考价值有限。工具的做法是隔几秒取两次快照做差，得到这段时间的使用率。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-CPU%E4%BD%BF%E7%94%A8%E7%8E%87%E4%B8%A4%E6%AC%A1%E5%BF%AB%E7%85%A7%E5%85%AC%E5%BC%8F.png" alt="CPU 使用率的两次快照差值公式"></p>
-<p><em>CPU 使用率的两次快照差值公式</em></p>
 <blockquote>
 <p>性能分析工具给出的都是间隔一段时间的平均 CPU 使用率，所以要注意间隔时间的设置，特别是用多个工具对比分析时，你一定要保证它们用的是相同的间隔时间。</p>
 </blockquote>
@@ -3579,7 +3566,6 @@ graph TD
 <li><strong>看 all 那一行就收工</strong>。每核分布被平均值抹平，一个核跑满、一个核在等 I&#x2F;O，all 行可能看起来波澜不惊。</li>
 </ol>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-%E7%9F%AD%E6%97%B6%E8%BF%9B%E7%A8%8Bperf%E9%87%87%E6%A0%B7%E6%8A%A5%E5%91%8A.png" alt="短时 stress 进程的 perf 采样报告"></p>
-<p><em>短时 stress 进程的 perf 采样报告</em></p>
 <p>短时进程这类问题，先用 pstree 看父子关系，确认是谁在反复拉起子进程；再上 execsnoop 盯 exec 调用，它按事件抓，不会像 top 那样漏掉活了几毫秒的进程。perf record 采样能做最后确认——图里 stress 占了 77% 的 CPU 时钟，热点落在随机数生成上，和 top 里「找不到进程」是同一件事的两面。</p>
 <table>
 <thead>
@@ -3675,11 +3661,9 @@ graph TD
 
 <h2 id="CPU-指标的分类"><a href="#CPU-指标的分类" class="headerlink" title="CPU 指标的分类"></a>CPU 指标的分类</h2><p>先把要看的东西分个类。CPU 性能口径说到底就四组：使用率、上下文切换、平均负载、缓存命中率。使用率再往下拆成用户态、系统态、等待 I&#x2F;O、软中断和硬中断，虚拟化环境里还有窃取和客户两类。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-CPU%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png" alt="CPU 性能指标分类脑图"></p>
-<p><em>CPU 性能指标分类脑图</em></p>
 <p>这些口径不是并列的孤立项，各自指向不同的层。用户 CPU 高，说明应用在用户态忙着算；系统 CPU 高，是内核态的事，比如频繁系统调用；iowait 高，CPU 其实在等硬件返回。把它们分开看，排查范围一下就缩小了——用户 CPU 高就别往内核态翻，iowait 高就别只盯进程列表。平均负载数的那三个值，是过去 1、5、15 分钟的平均活跃进程数，理想情况跟逻辑 CPU 个数相等。缓存命中率衡量的是 CPU 多级缓存的复用情况，L1、L2 在单核，L3 多核共享，命中率越低，CPU 等内存的时间越多。</p>
 <h2 id="三工具的指标关联"><a href="#三工具的指标关联" class="headerlink" title="三工具的指标关联"></a>三工具的指标关联</h2><p>指标知道怎么看，接下来是拿什么看。工具很多，真正常用的就那么几个，其中 top、vmstat、pidstat 三个覆盖面最广：top 给出各种使用率和僵尸进程、平均负载，vmstat 给出上下文切换次数、中断次数和运行&#x2F;不可中断进程数，pidstat 补上进程级的用户 CPU、系统 CPU 和两类切换。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-%E4%B8%89%E5%B7%A5%E5%85%B7%E6%8C%87%E6%A0%87%E5%85%B3%E8%81%94%E5%9B%BE.png" alt="top、vmstat、pidstat 三工具的 CPU 指标关联图"></p>
-<p><em>top、vmstat、pidstat 三工具的 CPU 指标关联图</em></p>
 <p>这张图更该当成一张路线图来读。虚线是指标之间的关联，也是下一步的方向。top 的用户 CPU 升高，就拿 pidstat 按进程对齐，找出是哪个进程在占；找到进程后再用 perf 看调用链、strace 看系统调用。top 的平均负载升高，对照 vmstat 的运行态和不可中断进程数：不可中断那一列涨了，转去查 I&#x2F;O，用 dstat、sar；运行态那一列涨了，回到 top 和 pidstat 找进程。top 的软中断高，查 <code>/proc/softirqs</code> 定类型，是网络接收就接 sar 和 tcpdump。</p>
 <pre class="mermaid">
 flowchart TD
@@ -3792,11 +3776,9 @@ flowchart LR
 
 <h2 id="文件系统与-I-O-栈"><a href="#文件系统与-I-O-栈" class="headerlink" title="文件系统与 I O 栈"></a>文件系统与 I O 栈</h2><p>Linux 里一切皆文件，普通文件、目录、块设备、套接字、管道都走统一的文件系统接口。文件系统管理文件靠两个结构：索引节点（inode）记录文件大小、权限、修改时间、数据位置这些元数据，和文件一一对应，存在磁盘上；目录项（dentry）记录文件名、inode 指针和目录关系，由内核维护在内存里，也就是目录项缓存。一个文件可以有多个目录项——硬链接就是不同名字指向同一个 inode。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E7%9B%AE%E5%BD%95%E9%A1%B9%E7%B4%A2%E5%BC%95%E8%8A%82%E7%82%B9%E4%B8%8E%E7%A3%81%E7%9B%98%E5%85%B3%E7%B3%BB.png" alt="目录项、索引节点与磁盘逻辑块的关系"></p>
-<p><em>目录项、索引节点与磁盘逻辑块的关系</em></p>
 <p>磁盘读写的最小单位是扇区，512 字节，一次读写这么小块效率太低，文件系统就把连续扇区组成逻辑块，常见 4 KB，作为最小管理单元。磁盘格式化后划成三个区：超级块存整个文件系统的状态，索引节点区存 inode，数据块区存文件数据。</p>
 <p>为了兼容 Ext4、XFS、NFS 这些实现各异的文件系统，内核在应用和具体文件系统之间加了虚拟文件系统 VFS，定义统一的数据结构和接口。应用只需跟 VFS 打交道，不必关心底层是哪种文件系统。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E6%9E%B6%E6%9E%84%E5%9B%BE.png" alt="Linux 文件系统架构：系统调用、VFS、缓存与块设备"></p>
-<p><em>Linux 文件系统架构：系统调用、VFS、缓存与块设备</em></p>
 <p>最底下的设备层，磁盘分机械和固态两类。机械盘靠磁头在盘片上寻道，连续 I&#x2F;O 省去寻址最快，随机 I&#x2F;O 要反复移动磁头，慢得多；固态盘没有机械寻址，随机性能远好于机械盘，但有「先擦除再写入」的限制，随机写会触发垃圾回收，同样比连续写慢。所以两类盘的随机 I&#x2F;O 都逊于连续 I&#x2F;O，只是差距大小不同。机械盘最小读写单位是 512 字节的扇区，固态盘是页，常见 4 KB 或 8 KB。</p>
 <p>再往上还有一层通用块层，它处在文件系统和磁盘驱动之间，向上提供访问块设备的标准接口，向下把各种磁盘抽象成统一块设备，还负责给 I&#x2F;O 请求排队、排序、合并——这就是 I&#x2F;O 调度。它支持四种调度算法：NOOP 是简单先入先出，常用于固态盘；CFQ 为每个进程维护队列、按时间片分配，适合进程多的桌面环境；DeadLine 给读写分队列、保证请求在期限内完成，多用于数据库这类 I&#x2F;O 压力重的场景；NONE 则完全不调度，常见于虚拟机，把调度交给物理机。整条栈自上而下是文件系统层、通用块层、设备层。</p>
 <pre class="mermaid">
@@ -3914,14 +3896,11 @@ flowchart LR
 
 <h2 id="内存的工作原理"><a href="#内存的工作原理" class="headerlink" title="内存的工作原理"></a>内存的工作原理</h2><p>进程能直接碰到的是内核给它的一块连续虚拟地址空间，物理内存要经映射才能访问。空间分内核段和用户段，进程在用户态只能访问用户空间，进了内核态才能访问内核空间；虽然每个进程都带着内核空间，但那里映射的是同一份物理内存。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E8%99%9A%E6%8B%9F%E5%9C%B0%E5%9D%80%E7%A9%BA%E9%97%B4%E5%88%86%E5%B8%83.png" alt="32 位与 64 位系统的虚拟地址空间分布"></p>
-<p><em>32 位与 64 位系统的虚拟地址空间分布</em></p>
 <p>所有进程的虚拟内存加起来远超物理内存，但真正用到的才分配物理页。虚拟地址到物理地址的对应关系记在页表里，由 MMU 负责转换；查不到时触发缺页异常，内核分配物理页、更新页表，再回到用户态继续跑。页表放在 MMU 里，还有一层更快的缓存 TLB，缓存的就是它——这正是减少上下文切换能提升内存访问速度的原因：切换少了，TLB 刷新就少。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E9%A1%B5%E8%A1%A8%E6%98%A0%E5%B0%84%E5%8E%9F%E7%90%86.png" alt="虚拟地址经页表映射到物理地址"></p>
-<p><em>虚拟地址经页表映射到物理地址</em></p>
 <p>映射的最小单位是页，通常 4 KB。页太小带来页表项暴涨——光 32 位系统映射 4 GB 空间就要一百多万个页表项——于是有了多级页表和 HugePage：前者只保存用得到的区块，后者用 2 MB 或 1 GB 的大页，给 Oracle、DPDK 这类吃大内存的程序用。缺页也不全是坏事，malloc 之后内存要等首次访问才真正分配，靠的就是这个机制；但频繁分配大块内存会让缺页异常堆积，内核花在维护页表上的时间跟着涨，这就是大块内存走 mmap 也让内核负担变重的原因之一。</p>
 <p>用户空间从低到高又分五段：只读段放代码和常量，数据段放全局变量，堆从低地址往上长，文件映射段从高地址往下长，栈放局部变量和调用上下文，大小固定。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-06-%E8%BF%9B%E7%A8%8B%E7%94%A8%E6%88%B7%E7%A9%BA%E9%97%B4%E5%86%85%E5%AD%98%E6%AE%B5.png" alt="进程用户空间的五个内存段分布"></p>
-<p><em>进程用户空间的五个内存段分布</em></p>
 <p><code>malloc()</code> 分配小块走 brk 移动堆顶，释放后缓存起来复用，快但容易攒碎片；大块走 mmap 在文件映射段申请，释放即归还，代价是每次都要缺页。内存紧张时，内核依次回收缓存、把不常访问的内存换到 Swap、实在不行用 OOM 杀掉评分最高的进程。</p>
 <p>回收缓存时绕不开 free 里的 buff&#x2F;cache 一列，它是 Buffer 和 Cache 的总和。两者定义查 <code>man free</code> 只看到来源，再查 <code>man proc</code> 才清楚：Buffers 是磁盘块的临时缓存，通常 20 MB 上下；Cache 是从文件读取的页缓存；SReclaimable 是 Slab 中可回收的那部分。</p>
 <p>口径容易记反，用 dd 做四个场景就能分清。清掉缓存后写一个 500 MB 的普通文件，观察到的是 Cache 一路上涨、Buffer 几乎不动；改向裸磁盘分区写 2 GB，Buffer 涨得比 Cache 快得多。读也一样：读文件 Cache 涨、Buffer 不动，读裸磁盘分区则 Buffer 涨得快。</p>
@@ -4058,7 +4037,6 @@ flowchart LR
 
 <h2 id="四类现象的分界"><a href="#四类现象的分界" class="headerlink" title="四类现象的分界"></a>四类现象的分界</h2><p>域名解析是把名字换成 IP。客户端按 <code>/etc/resolv.conf</code> 里配置的地址询问 DNS 服务器，缓存没命中时，服务器从根域开始逐级查 NS 记录，直到权威服务器给出 A 记录。公网延迟、丢包、缓存过期、DNS 服务器负载高，都会让这一步变慢；配置缺失时，查询会直接超时。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DNS%E9%80%92%E5%BD%92%E8%A7%A3%E6%9E%90%E6%B5%81%E7%A8%8B.png" alt="DNS 递归查询与缓存位置"></p>
-<p><em>DNS 递归查询与缓存位置</em></p>
 <p>工具自身变慢是另一类。ping 输出里每个包的 RTT 都在 30 毫秒左右，汇总却显示总耗时 11 秒，多出来的时间花在把 IP 反查成域名（PTR 请求）上。不少网络工具默认做名字解析，抓包时能看到两次 PTR 请求各自等到五秒超时，第二个包才发得出去。</p>
 <p>小包冲击看 PPS 和包长。接收每秒两万多包、每包五十多字节时，带宽占用极低，半开连接表却可能被占满，正常客户端连不上。这类现象的根子在连接状态，链路利用率读数给不出线索。</p>
 <p>请求延迟要分开看单次和并发。hping3 测 SYN 到 SYN+ACK 的往返时间只有七毫秒，wrk 压同一台机器却把平均延迟拉到四十多毫秒。差额来自一次请求内部多个分组的交互：服务端等 ACK，客户端等超时，两边各等一次，四十毫秒就堆出来了。</p>
@@ -4076,7 +4054,6 @@ flowchart TD
 <p>小包冲击的实验用三台机器：一台跑 Web 服务，一台模拟攻击，一台模拟正常客户端。攻击开始后，正常客户端连接超时；<code>sar -n DEV 1</code> 显示接收 PPS 两万多、吞吐每秒一千多 KB，算下来每包约 54 字节。抓包看到成片的 <code>Flags [S]</code>，<code>netstat</code> 里 <code>SYN_RECV</code> 状态堆到一百多条，源地址集中在同一 IP。按源地址拒绝后，正常请求恢复，延迟从两毫秒涨到一秒多，说明攻击包仍在消耗内核资源。源地址随机时按 IP 拒绝失效，改用限制 SYN 速率、调大半连接队列、减少 SYN+ACK 重试、打开 SYN Cookies。这些手段都只是缓解：报文已经进了服务器，内核协议栈的处理开销还在；带宽被打满的情况要在上游做流量清洗。</p>
 <p>请求延迟的排查靠单请求与并发的对比。hping3 测两个端口都在七毫秒左右，wrk 并发一百时，一个端口平均九毫秒，另一个四十多毫秒。抓 8080 端口的包放进 Wireshark，跟随 TCP 流看时序：第一次请求响应很快，第二次请求里客户端收到第一个分组后隔了四十毫秒才发 ACK。这个数字对应延迟确认的超时时间；再用 strace 看压测工具只设了 <code>TCP_NODELAY</code>，没设快速确认，服务端配置里 <code>tcp_nodelay</code> 又是关的。服务端开着 Nagle 等 ACK，客户端等着延迟确认超时，两边互相等。打开服务端的 <code>tcp_nodelay</code> 后，两个分组连续发出，平均延迟回到九毫秒。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-%E5%BB%B6%E8%BF%9F%E7%A1%AE%E8%AE%A4%E6%B5%81%E5%9B%BE.png" alt="TCP 流图中的 40 毫秒延迟确认"></p>
-<p><em>TCP 流图中的 40 毫秒延迟确认</em></p>
 <h2 id="dig-与-tcpdump-命令"><a href="#dig-与-tcpdump-命令" class="headerlink" title="dig 与 tcpdump 命令"></a>dig 与 tcpdump 命令</h2><p>DNS 这一侧，先看本机配置，再看解析结果和递归路径。<code>-debug</code> 给出查询发给谁，<code>+trace</code> 逐层列出 NS 与最终 A 记录，每一跳后面的耗时能定位是哪一级慢。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ <span class="built_in">cat</span> /etc/resolv.conf</span><br><span class="line">nameserver 114.114.114.114</span><br><span class="line"></span><br><span class="line">$ nslookup -debug time.geekbang.org</span><br><span class="line">;; Connection to 127.0.0.1<span class="comment">#53(127.0.0.1) failed: connection refused.</span></span><br><span class="line"></span><br><span class="line">$ dig +trace +nodnssec time.geekbang.org</span><br><span class="line">$ time nslookup time.geekbang.org</span><br><span class="line">$ ping -c3 114.114.114.114</span><br></pre></td></tr></table></figure>
 
@@ -4086,12 +4063,10 @@ flowchart TD
 <figure class="highlight text"><table><tr><td class="code"><pre><span class="line">14:02:31.539995 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br><span class="line">14:02:36.545104 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-PTR%E6%9F%A5%E8%AF%A2%E6%8A%93%E5%8C%85%E7%BB%93%E6%9E%9C.png" alt="Wireshark 中两次 PTR 请求没有响应"></p>
-<p><em>Wireshark 中两次 PTR 请求没有响应</em></p>
 <p>连接与延迟这一侧，<code>sar</code> 看 PPS 和包长，<code>netstat</code> 按状态统计半开连接，<code>strace</code> 看应用给套接字设了哪些选项。三步分别对应链路、连接表和应用程序。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ sar -n DEV 1</span><br><span class="line">$ netstat -n -p | grep SYN_REC | <span class="built_in">wc</span> -l</span><br><span class="line">$ iptables -I INPUT -s 192.168.0.2 -p tcp -j REJECT</span><br><span class="line">$ sysctl -w net.ipv4.tcp_syncookies=1</span><br><span class="line">$ strace -f wrk --latency -c 100 -t 2 --<span class="built_in">timeout</span> 2 http://192.168.0.30:8080/</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DoS%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="目标机、攻击源与正常客户端三虚拟机拓扑"></p>
-<p><em>目标机、攻击源与正常客户端三虚拟机拓扑</em></p>
 <h2 id="跳过归因就调参数"><a href="#跳过归因就调参数" class="headerlink" title="跳过归因就调参数"></a>跳过归因就调参数</h2><p>解析超时先别判定网络不通：配置缺失时，到 DNS 服务器的 ICMP 完全正常。RTT 低也别急着下判断，工具总耗时里可能藏着反查。几条常见的走偏：</p>
 <ol>
 <li><strong>看到超时就改 DNS 服务器地址</strong>。先确认本机有没有 nameserver、查询实际发往哪里，再比较候选服务器的 RTT 和丢包。</li>
@@ -4200,7 +4175,6 @@ flowchart TD
 <h2 id="动态追踪的事件源"><a href="#动态追踪的事件源" class="headerlink" title="动态追踪的事件源"></a>动态追踪的事件源</h2><p>动态追踪在系统正常运行时通过探针采集行为，不用改代码、不用重启服务。事件源分三类：硬件事件来自性能监控计数器，覆盖缓存、指令周期、分支预测；静态探针事先写进代码，常见的有内核跟踪点和用户态的 USDT；动态探针在运行时挂到函数入口或返回处，内核侧叫 kprobes，用户态叫 uprobes。</p>
 <p>USDT 要求应用自己埋点，数据库类软件常内置；kprobes 与 uprobes 可以在运行时挂到任意函数，灵活性更高，代价是要拿到符号。工具建立在探针之上。<code>ftrace</code> 通过 <code>/sys/kernel/debug/tracing</code> 下的文件交互，<code>function_graph</code> 能给出调用关系；<code>perf</code> 采样事件，也能用 <code>perf probe</code> 加自定义探针；<code>eBPF</code> 在内核里跑自定义程序，<code>BCC</code> 把编译和加载包装成 Python 接口；<code>SystemTap</code> 把脚本编译成内核模块再插入；<code>sysdig</code> 面向容器场景。多数性能问题用 <code>perf</code> 加火焰图就够，需要按 I&#x2F;O 大小这类维度做统计时再写脚本。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E5%9C%BA%E6%99%AF%E4%B8%8E%E5%B7%A5%E5%85%B7.png" alt="常见动态追踪场景与推荐工具"></p>
-<p><em>常见动态追踪场景与推荐工具</em></p>
 <h2 id="容器冷启动的等待分布"><a href="#容器冷启动的等待分布" class="headerlink" title="容器冷启动的等待分布"></a>容器冷启动的等待分布</h2><p>一个容器化应用启动后，客户端先收到连接重置，等待二十多秒才拿到一次响应，随后容器退出。<code>docker logs</code> 里只有启动完成的记录，看不出原因；<code>docker inspect</code> 显示 <code>OOMKilled</code> 为真、退出码 137。内核日志进一步指出，OOM 发生在 cgroup 内存限制处：容器限额 512 MB，进程匿名内存加页内存已经顶到 524 MB。</p>
 <p>再看 JVM 的堆设置，最大堆接近 2 GB。容器内部看到的可用内存仍是主机规格，运行时按主机内存推算堆上限，和 cgroup 限额对不上。显式给堆设置与容器限额一致的上限后，应用能稳定响应。这里的判断依据是容器边界：限额写在外层，进程看到的是另一套数字。</p>
 <p>启动仍然要二十多秒。<code>top</code> 里 CPU 总体空闲，java 进程只占一成；在启动过程中用 <code>pidstat -t</code> 看线程，部分线程的等待列接近 97%，CPU 使用列却很低。容器的 CPU 份额被设成 0.1 个核，线程大量时间耗在等调度。把份额提到一个核，同样的应用两秒启动完成。去掉限额能让容器跑得更快，代价是任何应用异常都可能拖垮整机，这个交换通常不划算。</p>
@@ -4219,12 +4193,9 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ ps -f --ppid 2 -p 2</span><br><span class="line">$ top</span><br><span class="line">$ perf record -a -g -p 9 -- <span class="built_in">sleep</span> 30</span><br><span class="line">$ perf report -g graph,0</span><br><span class="line">$ perf script -i /root/perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl &gt; ksoftirqd.svg</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-ksoftirqd%E7%81%AB%E7%84%B0%E5%9B%BE.png" alt="ksoftirqd 采样生成的 CPU 火焰图"></p>
-<p><em>ksoftirqd 采样生成的 CPU 火焰图</em></p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%86%85%E6%A0%B8%E7%BA%BF%E7%A8%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="服务端与压测客户端的实验拓扑"></p>
-<p><em>服务端与压测客户端的实验拓扑</em></p>
 <p>火焰图从下往上看，下面一层是上面一层的父调用；同一层按函数名排序，宽度对应采样占比。展开最宽的那条路径，能看到收包、网桥、Netfilter 到转发的连续调用，其余小火焰里还有 TCP 与连接跟踪的函数。报告里的热点调用链从 <code>net_rx_action</code>、<code>netif_receive_skb</code> 到 <code>br_handle_frame</code>、<code>br_nf_pre_routing</code>，再经 <code>br_pass_frame_up</code> 到 <code>ip_forward</code>。收包、网桥、Netfilter 钩子连在一起，对应容器网络经 veth 到 docker0 网桥的路径；结合压测端发出的 SYN 小包，软中断升高就有了具体来源。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-Docker%E7%BD%91%E6%A1%A5%E4%B8%8EDNAT%E8%B7%AF%E5%BE%84.png" alt="容器、veth、docker0 网桥与 DNAT 规则的位置"></p>
-<p><em>容器、veth、docker0 网桥与 DNAT 规则的位置</em></p>
 <p>需要看某个函数的参数或返回值时，用 <code>perf probe</code> 挂动态探针；<code>perf trace</code> 提供系统调用视图，走的是内核事件，开销比基于 ptrace 的 <code>strace</code> 小。<code>ftrace</code> 的五步操作可以用 <code>trace-cmd</code> 收成两条命令。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ perf probe --add <span class="string">&#x27;do_sys_open filename:string&#x27;</span></span><br><span class="line">$ perf record -e probe:do_sys_open -aR <span class="built_in">ls</span></span><br><span class="line">$ perf script</span><br><span class="line">$ perf probe --del probe:do_sys_open</span><br><span class="line">$ <span class="built_in">cd</span> /sys/kernel/debug/tracing</span><br><span class="line">$ trace-cmd record -p function_graph -g do_sys_open -O funcgraph-proc <span class="built_in">ls</span></span><br></pre></td></tr></table></figure>
 
@@ -4330,11 +4301,9 @@ flowchart TD
 
 <h2 id="NAT-与连接跟踪"><a href="#NAT-与连接跟踪" class="headerlink" title="NAT 与连接跟踪"></a>NAT 与连接跟踪</h2><p>NAT 改写 IP 包的源地址或目的地址，让多台内网机器共享出口 IP。静态 NAT 做一对一固定映射，动态 NAT 从地址池里挑，日常最常见的是带端口的 NAPT：SNAT 在发包时替换源地址和源端口，DNAT 在收包时替换目的地址和目的端口，两者一起用就形成双向的一对一映射。Linux 上这些规则由 Netfilter 框架执行，<code>iptables</code> 是配置入口；NAT 规则写在 nat 表，SNAT 与 MASQUERADE 挂 POSTROUTING 链，DNAT 挂 PREROUTING 链。转发还得打开 IP 转发选项。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-SNAT%E4%B8%8EDNAT%E8%BD%AC%E6%8D%A2%E8%BF%87%E7%A8%8B.png" alt="SNAT 与 DNAT 在网关两侧的改写位置"></p>
-<p><em>SNAT 与 DNAT 在网关两侧的改写位置</em></p>
 <p>改写地址要依赖连接跟踪模块 conntrack。它用一张哈希表记录每条连接的协议、地址和端口，回包才能找到对应的原始连接。这张表是 NAT 的实现基础，也是性能成本所在：每条新连接要查表和分配跟踪对象，表项满了会直接丢包。哈希表大小由 <code>nf_conntrack_buckets</code> 决定，最大记录数由 <code>nf_conntrack_max</code> 决定，两者的比值决定链表长度；调大上限意味着更多内存，调小则容易在并发高峰撞到天花板。MASQUERADE 是最常见的出口规则，多个内网地址转成同一个公网地址时，源端口可能被重新分配。连接按五元组区分，内网地址不同，端口相同也能共存；出口侧可用的端口数、连接跟踪表和带宽都在同一条链上，其中一项见顶就会拖住整体。</p>
 <h2 id="连接表打满的证据链"><a href="#连接表打满的证据链" class="headerlink" title="连接表打满的证据链"></a>连接表打满的证据链</h2><p>实验用两台机器，一台跑服务，一台用 ab 压测。先用主机网络起服务，并发五千、总请求十万，得到每秒六千五百多请求、平均延迟七百多毫秒的基线。换成做端口映射的容器后，两秒超时的压测只完成五千多个请求；把超时放宽到三十秒，结果变成每秒七十多个请求，平均延迟六十五秒。延迟涨了几十倍，先怀疑内核里有丢包。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-NAT%E5%8E%8B%E6%B5%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="NAT 压测的服务端与客户端两台机器"></p>
-<p><em>NAT 压测的服务端与客户端两台机器</em></p>
 <p>用动态追踪脚本挂在 <code>kfree_skb</code> 上统计丢包位置，输出里一万多个包丢在 <code>nf_hook_slow</code>，只有几百个丢在 <code>tcp_v4_rcv</code>。这个名字指向 Netfilter 的钩子函数，范围缩到 NAT 相关路径。接着用 <code>perf record</code> 抓调用栈，在报告里找 <code>nf_hook_slow</code>，三条主要路径浮出来：连接跟踪的 <code>ipv4_conntrack_in</code>、网桥转发的 <code>br_nf_pre_routing</code>、做 DNAT 的 <code>iptable_nat_ipv4_in</code>。三处开销都落在内核态，方向转向连接跟踪配置。</p>
 <pre class="mermaid">
 flowchart TD
@@ -4356,7 +4325,6 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ conntrack -L -o extended | <span class="built_in">wc</span> -l</span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;/^.*tcp.*$/ &#123;sum[$6]++&#125; END &#123;for(i in sum) print i, sum[i]&#125;&#x27;</span></span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;&#123;print $7&#125;&#x27;</span> | <span class="built_in">cut</span> -d <span class="string">&quot;=&quot;</span> -f 2 | <span class="built_in">sort</span> | <span class="built_in">uniq</span> -c | <span class="built_in">sort</span> -nr | <span class="built_in">head</span> -n 10</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-nf_hook_slow%E8%B0%83%E7%94%A8%E6%A0%88.png" alt="perf 报告中 nf_hook_slow 的三条调用路径"></p>
-<p><em>perf 报告中 nf_hook_slow 的三条调用路径</em></p>
 <h2 id="参数调整的常见顺序"><a href="#参数调整的常见顺序" class="headerlink" title="参数调整的常见顺序"></a>参数调整的常见顺序</h2><p>定位到瓶颈之前，调参数容易变成逐项试错。几种常见的走偏：</p>
 <ol>
 <li><strong>吞吐掉了就加套接字缓冲</strong>。缓冲区能吸收突发，也会拉长排队时间；连接表打满时，加缓冲只会让等待更久。</li>
@@ -4440,7 +4408,6 @@ flowchart TD
 </tr>
 </tbody></table>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-%E7%BD%91%E7%BB%9C%E6%8C%87%E6%A0%87%E4%B8%8E%E5%B7%A5%E5%85%B7%E5%AF%B9%E7%85%A7%E8%A1%A8.png" alt="网络性能指标与观测工具对照表"></p>
-<p><em>网络性能指标与观测工具对照表</em></p>
 <h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>NAT 的开销来自两处：Netfilter 钩子改地址，conntrack 维护连接状态。压测吞吐骤降时，沿丢包点、调用栈、内核日志、表内状态这条链往下查，比逐项调参数更有效；表项上限要按并发和内存一起算，调完用同一组压测参数复测。再往上的优化按协议层展开：应用改 I&#x2F;O 与工作模型，套接字按带宽乘延迟定缓冲，传输层和网络层调连接与分片参数，链路层分摊中断并合理卸载。这些方法用尽仍不够，才考虑 DPDK 或 XDP 绕过协议栈。</p>
 <p><strong>参考</strong></p>
 <ul>
@@ -4464,21 +4431,16 @@ flowchart TD
 
 <h2 id="USE-法与黄金指标"><a href="#USE-法与黄金指标" class="headerlink" title="USE 法与黄金指标"></a>USE 法与黄金指标</h2><p>系统监控看资源。USE 法把每种资源的指标压成三类：使用率是服务时间或容量占比，饱和度对应等待队列，错误数是出错事件数。CPU 看使用率、运行队列和硬件错误，内存看用量、换页和 OOM，磁盘看设备忙闲、等待队列和 I&#x2F;O 错误，网络看带宽、重传和丢包；文件描述符、连接数、连接跟踪这些软件资源也能套同一套。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-USE%E6%B3%95%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png" alt="USE 法按资源分类的指标表"></p>
-<p><em>USE 法按资源分类的指标表</em></p>
 <p>应用监控看请求。资源使用率低并不能说明应用正常，锁等待或下游 RPC 慢都会拖长响应。核心指标是请求数、错误数和响应时间；再往外补三层：进程资源占用用来和系统资源对齐，服务间调用的频率、错误与延迟用来定位调用链问题，核心逻辑的耗时与错误要靠应用自己暴露。跨服务的调用链用链路跟踪工具串起来，日志提供参数与上下文，指标解决「哪里慢」，日志回答「什么样的请求慢」。</p>
 <p>监控系统由采集、存储、查询处理、告警和可视化几块组成。采集有拉模式和推模式，目标动态变化时配合服务发现；时序库按时间追加写入，查询语言支撑告警规则与看板；告警要分组、抑制和静默，否则同类问题会把值班通知淹没。日志侧常用 ELK 或更轻量的 EFK，链路侧用 Jaeger 一类工具。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-Prometheus%E7%9B%91%E6%8E%A7%E6%9E%B6%E6%9E%84.png" alt="Prometheus 采集、存储、查询、告警与展示架构"></p>
-<p><em>Prometheus 采集、存储、查询、告警与展示架构</em></p>
 <h2 id="丢包与吞吐两条证据链"><a href="#丢包与吞吐两条证据链" class="headerlink" title="丢包与吞吐两条证据链"></a>丢包与吞吐两条证据链</h2><p>丢包案例从 hping3 开始：发十个 SYN 只收回五个，RTT 在三毫秒到三秒之间跳。包可能丢在链路、网卡环形缓冲、QoS、IP 分片、连接跟踪、端口监听、套接字缓冲或应用层，逐层查比凭猜测快。容器内 <code>netstat -i</code> 没有网卡错误，<code>tc -s qdisc</code> 却显示 eth0 上挂了 netem 规则，丢包率 30%。删掉规则后仍然丢包；<code>netstat -s</code> 里是连接失败、SYN 重传和半连接重置；回到主机查 conntrack，当前 182、上限 262144，排除表满；<code>iptables -nvL</code> 暴露出 INPUT 与 OUTPUT 链各有一条随机丢弃 30% 的规则。删掉两条规则，hping3 恢复零丢包。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E7%BD%91%E7%BB%9C%E5%90%84%E5%B1%82%E4%B8%A2%E5%8C%85%E4%BD%8D%E7%BD%AE.png" alt="网络收发各层可能发生丢包的位置"></p>
-<p><em>网络收发各层可能发生丢包的位置</em></p>
 <p>故事还没完。curl 访问 HTTP 仍然超时，hping3 却显示端口正常。抓包看到三次握手完成后，三秒内没有 GET，只有客户端发出的 FIN；<code>netstat -i</code> 的接收丢弃数涨到 344。两种工具的差别在于 curl 会携带 HTTP 数据，而 eth0 的 MTU 被设成了 100。改回以太网默认值后，请求正常返回。验证工具只覆盖到端口，就不足以宣布问题解决。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E4%B8%A2%E5%8C%85%E6%A1%88%E4%BE%8BTCP%E6%B5%81%E5%9B%BE.png" alt="三次握手后三秒关闭的 TCP 流图"></p>
-<p><em>三次握手后三秒关闭的 TCP 流图</em></p>
 <p>吞吐案例里，wrk 压 Nginx 加 PHP，初始每秒 189 个请求，响应全部异常。<code>ss -s</code> 显示大量 TIME_WAIT，<code>dmesg</code> 报 <code>table full</code>，连接跟踪上限与当前值都是 200；调大上限后吞吐到 5382，但四万多个响应仍异常。Nginx 日志里的 499 指向服务端处理太慢，PHP 日志提示 <code>max_children</code> 只有 5；调到 20 后成功请求从八千多涨到一万五。继续查 <code>netstat -s</code>，监听队列溢出次数持续上涨，<code>ss -ltnp</code> 里监听队列只有 10，调大应用 backlog 与系统 somaxconn。</p>
 <p>队列修好后响应又全部失败，Nginx 报 <code>EADDRNOTAVAIL</code>，临时端口范围只有 50 个。扩到一万多个端口后异常响应很少，但读错误增多；<code>top</code> 里系统 CPU 接近一半，火焰图热点落在 <code>inet_hash_connect</code> 和 <code>__init_check_established</code>。<code>ss -s</code> 显示三万多个 TIME_WAIT 仍占着端口，<code>tcp_tw_reuse</code> 处于关闭状态；打开后吞吐稳定在五千多，异常响应清零。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E5%90%9E%E5%90%90%E9%87%8F%E7%93%B6%E9%A2%88%E7%81%AB%E7%84%B0%E5%9B%BE.png" alt="吞吐量瓶颈中的端口分配调用栈"></p>
-<p><em>吞吐量瓶颈中的端口分配调用栈</em></p>
 <pre class="mermaid">
 flowchart TD
     A[&quot;现象：丢包或吞吐下降&quot;] --&gt; B[&quot;逐层取证据&quot;]
@@ -4495,7 +4457,6 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ ss -s</span><br><span class="line">$ ss -ltnp</span><br><span class="line">$ dmesg | <span class="built_in">tail</span></span><br><span class="line">$ docker logs nginx --<span class="built_in">tail</span> 10</span><br><span class="line">$ sysctl -w net.core.somaxconn=65536</span><br><span class="line">$ perf record -g</span><br><span class="line">$ perf script -i ~/perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl &gt; nginx.svg</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-Jaeger%E8%B0%83%E7%94%A8%E9%93%BE%E7%A4%BA%E4%BE%8B.png" alt="Jaeger 调用链中定位到 Redis 超时"></p>
-<p><em>Jaeger 调用链中定位到 Redis 超时</em></p>
 <h2 id="指标堆叠的报警噪声"><a href="#指标堆叠的报警噪声" class="headerlink" title="指标堆叠的报警噪声"></a>指标堆叠的报警噪声</h2><p>监控建起来以后，常见的问题是指标太多、告警太碎。几条走偏：</p>
 <ol>
 <li><strong>只看使用率就下结论</strong>。使用率低时应用仍可能卡在锁或下游调用上，配合饱和度和错误数一起看。</li>
@@ -4609,12 +4570,10 @@ flowchart TD
 
 <h2 id="网络栈的四层结构"><a href="#网络栈的四层结构" class="headerlink" title="网络栈的四层结构"></a>网络栈的四层结构</h2><p>日常说的二层、三层、四层、七层来自 OSI 七层模型，Linux 实际实现的是更实用的 TCP&#x2F;IP 四层：应用层放 HTTP、DNS 这类协议，传输层管端到端通信，网络层负责封装、寻址和路由，网络接口层处理 MAC 寻址与网卡收发。谈到七层负载均衡时，指的是 OSI 的应用层；落到协议栈上，它对应 TCP&#x2F;IP 的应用层。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-Linux%E7%BD%91%E7%BB%9C%E6%A0%88%E5%88%86%E5%B1%82.png" alt="Linux 网络栈分层结构"></p>
-<p><em>Linux 网络栈分层结构</em></p>
 <p>应用数据向下走时，每层只在前后加上固定格式的头尾：传输层加 TCP 头，网络层加 IP 头，网络接口层加帧头和帧尾，原始负载本身不改。链路能传的帧有上限，MTU 规定了 IP 包的最大尺寸，以太网默认 1500 字节。超过这个尺寸就要在网络层分片，分片越多，收发两端的重组开销越大。调 MTU 之前先看路径上有没有叠加网络，端到端任何一段不支持，调了也白调。</p>
 <p>收发过程中涉及三类缓冲区，位置容易搞混。网卡通过 DMA 交互的环形缓冲区由网卡驱动管理；网卡中断处理程序分配 <code>sk_buff</code> 承载网络帧，各层之间传递时只改指针，不反复复制数据；套接字缓冲区由应用按连接设置大小，发送数据是往里写，接收数据是从里读。这些缓冲区都在内核管理的内存里，<code>sk_buff</code>、连接跟踪等通过 slab 分配器管理，可以在 <code>/proc/slabinfo</code> 看占用。</p>
 <p>网络包的处理跨了硬中断和软中断：网卡硬中断只做最核心的读取或发送，协议栈的大部分逻辑留给软中断。每个 CPU 绑一个 <code>ksoftirqd</code> 线程处理软中断，硬中断、<code>kworker</code> 等机制一起配合，看到某个 CPU 的软中断占用高，先查网络收发是否集中在那一核。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E7%BD%91%E7%BB%9C%E5%8C%85%E6%94%B6%E5%8F%91%E4%B8%8E%E5%B0%81%E8%A3%85%E6%B5%81%E7%A8%8B.png" alt="网络包接收与发送时的逐层封装"></p>
-<p><em>网络包接收与发送时的逐层封装</em></p>
 <h2 id="千兆网卡的基准量级"><a href="#千兆网卡的基准量级" class="headerlink" title="千兆网卡的基准量级"></a>千兆网卡的基准量级</h2><p>接收方向：网卡把帧 DMA 到收包队列，硬中断触发后分配 <code>sk_buff</code>，再用软中断通知内核；链路层验合法性、认出上层协议并去掉帧头，网络层判断转发还是本机接收，传输层按源 IP、源端口、目的 IP、目的端口四元组找到套接字，把数据放进接收缓存，应用才读得到。发送方向反过来：<code>sendmsg</code> 进入套接字层，写入发送缓冲，逐层加头、查路由、按 MTU 分片，网络接口层找到下一跳 MAC 并加上帧头帧尾放进发包队列，软中断通知驱动，驱动用 DMA 发出去。</p>
 <pre class="mermaid">
 flowchart LR
@@ -4635,7 +4594,6 @@ flowchart LR
 <p>把量级摊开看，C10K 指的是单机一万并发连接。按 2GB 内存、千兆网卡的老配置算，每连接只要低于 200KB 内存和 100Kbit 带宽，物理资源就够，卡点在同步阻塞模型：一请求一线程，一万个线程的调度和上下文切换先撑不住。I&#x2F;O 多路复用让一个线程盯一批套接字，<code>select</code> 和 <code>poll</code> 需要轮询描述符集合，还要在用户态和内核态之间来回拷贝；<code>epoll</code> 在内核里用红黑树管理描述符，只处理有事件的那些，轮询的开销省掉了。</p>
 <p>有了多路复用，还要定工作模型。主进程初始化套接字、管理子进程，worker 进程各自处理请求，这是反向代理常见的结构；多个 worker 同时等待同一个事件会惊群，需要锁或独占选项来约束。另一种是多个进程各监听同一端口，由内核分发连接，少了应用侧抢锁这一步。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E4%B8%BB%E8%BF%9B%E7%A8%8B%E4%B8%8Eworker%E6%A8%A1%E5%9E%8B.png" alt="主进程加多个 worker 的请求处理模型"></p>
-<p><em>主进程加多个 worker 的请求处理模型</em></p>
 <p>从 C10K 到十万并发，多数情况加物理资源、沿用多路复用就能过。到一百万并发，账就变了：每个连接 16KB 内存意味着约 15GB；按两成连接活跃、每连接每秒 1KB 算，吞吐量要 1.6Gb&#x2F;s，千兆网卡接不住。文件描述符数量、连接跟踪、协议栈缓存、多队列网卡、软中断负载均衡、TSO&#x2F;GRO 这类卸载都要一起考虑。再往上到千万并发，协议栈路径本身成了负担，DPDK 跳过内核协议栈在用户态轮询收包，XDP 在包进协议栈之前处理；更多场景直接把请求分摊到多台机器，改动比单机极限优化小得多。</p>
 <h2 id="ip-与-sar-的观测"><a href="#ip-与-sar-的观测" class="headerlink" title="ip 与 sar 的观测"></a>ip 与 sar 的观测</h2><p>先看接口配置和收发统计。<code>ip -s</code> 比 <code>ifconfig</code> 给的信息更细，<code>LOWER_UP</code> 表示物理链路连通，<code>mtu</code> 是最大传输单元，RX&#x2F;TX 下的 <code>errors</code>、<code>dropped</code>、<code>overruns</code>、<code>carrier</code> 只要非零，就说明链路上有丢包或错误，得先定位这一层。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ ip -s addr show dev eth0</span><br><span class="line">2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc mq state UP qlen 1000</span><br><span class="line">    inet 10.240.0.30/12 brd 10.255.255.255 scope global eth0</span><br><span class="line">    RX: bytes  packets errors dropped overrun mcast</span><br><span class="line">        9542432350 40809397 0 0 0 193</span><br><span class="line">    TX: bytes  packets errors dropped carrier collsns</span><br><span class="line">        4815625265 32637658 0 0 0 0</span><br><span class="line"></span><br><span class="line">$ ethtool eth0 | grep Speed</span><br><span class="line">    Speed: 1000Mb/s</span><br></pre></td></tr></table></figure>
@@ -4774,7 +4732,6 @@ flowchart LR
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ docker run -itd --name=nginx -p 80:80 nginx</span><br><span class="line">$ curl http://192.168.0.30/</span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-04-Nginx%E4%B8%8Ehping3%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="Nginx 与 hping3 两台虚拟机的实验拓扑"></p>
-<p><em>Nginx 与 hping3 两台虚拟机的实验拓扑</em></p>
 <p>客户端用 hping3 以每隔 100 微秒一个包的节奏往 80 端口发 SYN，压测开始。</p>
 <figure class="highlight sh"><table><tr><td class="code"><pre><span class="line">$ hping3 -S -p 80 -i u100 192.168.0.30</span><br></pre></td></tr></table></figure>
 

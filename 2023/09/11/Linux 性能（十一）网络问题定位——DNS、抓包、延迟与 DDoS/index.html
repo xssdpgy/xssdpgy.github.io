@@ -272,7 +272,6 @@
 
 <h2 id="四类现象的分界"><a href="#四类现象的分界" class="headerlink" title="四类现象的分界"></a>四类现象的分界</h2><p>域名解析是把名字换成 IP。客户端按 <code>/etc/resolv.conf</code> 里配置的地址询问 DNS 服务器，缓存没命中时，服务器从根域开始逐级查 NS 记录，直到权威服务器给出 A 记录。公网延迟、丢包、缓存过期、DNS 服务器负载高，都会让这一步变慢；配置缺失时，查询会直接超时。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DNS%E9%80%92%E5%BD%92%E8%A7%A3%E6%9E%90%E6%B5%81%E7%A8%8B.png" alt="DNS 递归查询与缓存位置"></p>
-<p><em>DNS 递归查询与缓存位置</em></p>
 <p>工具自身变慢是另一类。ping 输出里每个包的 RTT 都在 30 毫秒左右，汇总却显示总耗时 11 秒，多出来的时间花在把 IP 反查成域名（PTR 请求）上。不少网络工具默认做名字解析，抓包时能看到两次 PTR 请求各自等到五秒超时，第二个包才发得出去。</p>
 <p>小包冲击看 PPS 和包长。接收每秒两万多包、每包五十多字节时，带宽占用极低，半开连接表却可能被占满，正常客户端连不上。这类现象的根子在连接状态，链路利用率读数给不出线索。</p>
 <p>请求延迟要分开看单次和并发。hping3 测 SYN 到 SYN+ACK 的往返时间只有七毫秒，wrk 压同一台机器却把平均延迟拉到四十多毫秒。差额来自一次请求内部多个分组的交互：服务端等 ACK，客户端等超时，两边各等一次，四十毫秒就堆出来了。</p>
@@ -290,7 +289,6 @@ flowchart TD
 <p>小包冲击的实验用三台机器：一台跑 Web 服务，一台模拟攻击，一台模拟正常客户端。攻击开始后，正常客户端连接超时；<code>sar -n DEV 1</code> 显示接收 PPS 两万多、吞吐每秒一千多 KB，算下来每包约 54 字节。抓包看到成片的 <code>Flags [S]</code>，<code>netstat</code> 里 <code>SYN_RECV</code> 状态堆到一百多条，源地址集中在同一 IP。按源地址拒绝后，正常请求恢复，延迟从两毫秒涨到一秒多，说明攻击包仍在消耗内核资源。源地址随机时按 IP 拒绝失效，改用限制 SYN 速率、调大半连接队列、减少 SYN+ACK 重试、打开 SYN Cookies。这些手段都只是缓解：报文已经进了服务器，内核协议栈的处理开销还在；带宽被打满的情况要在上游做流量清洗。</p>
 <p>请求延迟的排查靠单请求与并发的对比。hping3 测两个端口都在七毫秒左右，wrk 并发一百时，一个端口平均九毫秒，另一个四十多毫秒。抓 8080 端口的包放进 Wireshark，跟随 TCP 流看时序：第一次请求响应很快，第二次请求里客户端收到第一个分组后隔了四十毫秒才发 ACK。这个数字对应延迟确认的超时时间；再用 strace 看压测工具只设了 <code>TCP_NODELAY</code>，没设快速确认，服务端配置里 <code>tcp_nodelay</code> 又是关的。服务端开着 Nagle 等 ACK，客户端等着延迟确认超时，两边互相等。打开服务端的 <code>tcp_nodelay</code> 后，两个分组连续发出，平均延迟回到九毫秒。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-%E5%BB%B6%E8%BF%9F%E7%A1%AE%E8%AE%A4%E6%B5%81%E5%9B%BE.png" alt="TCP 流图中的 40 毫秒延迟确认"></p>
-<p><em>TCP 流图中的 40 毫秒延迟确认</em></p>
 <h2 id="dig-与-tcpdump-命令"><a href="#dig-与-tcpdump-命令" class="headerlink" title="dig 与 tcpdump 命令"></a>dig 与 tcpdump 命令</h2><p>DNS 这一侧，先看本机配置，再看解析结果和递归路径。<code>-debug</code> 给出查询发给谁，<code>+trace</code> 逐层列出 NS 与最终 A 记录，每一跳后面的耗时能定位是哪一级慢。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">cat</span> /etc/resolv.conf</span><br><span class="line">nameserver 114.114.114.114</span><br><span class="line"></span><br><span class="line">$ nslookup -debug time.geekbang.org</span><br><span class="line">;; Connection to 127.0.0.1<span class="comment">#53(127.0.0.1) failed: connection refused.</span></span><br><span class="line"></span><br><span class="line">$ dig +trace +nodnssec time.geekbang.org</span><br><span class="line">$ time nslookup time.geekbang.org</span><br><span class="line">$ ping -c3 114.114.114.114</span><br></pre></td></tr></table></figure>
 
@@ -300,12 +298,10 @@ flowchart TD
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">14:02:31.539995 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br><span class="line">14:02:36.545104 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-PTR%E6%9F%A5%E8%AF%A2%E6%8A%93%E5%8C%85%E7%BB%93%E6%9E%9C.png" alt="Wireshark 中两次 PTR 请求没有响应"></p>
-<p><em>Wireshark 中两次 PTR 请求没有响应</em></p>
 <p>连接与延迟这一侧，<code>sar</code> 看 PPS 和包长，<code>netstat</code> 按状态统计半开连接，<code>strace</code> 看应用给套接字设了哪些选项。三步分别对应链路、连接表和应用程序。</p>
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ sar -n DEV 1</span><br><span class="line">$ netstat -n -p | grep SYN_REC | <span class="built_in">wc</span> -l</span><br><span class="line">$ iptables -I INPUT -s 192.168.0.2 -p tcp -j REJECT</span><br><span class="line">$ sysctl -w net.ipv4.tcp_syncookies=1</span><br><span class="line">$ strace -f wrk --latency -c 100 -t 2 --<span class="built_in">timeout</span> 2 http://192.168.0.30:8080/</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DoS%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="目标机、攻击源与正常客户端三虚拟机拓扑"></p>
-<p><em>目标机、攻击源与正常客户端三虚拟机拓扑</em></p>
 <h2 id="跳过归因就调参数"><a href="#跳过归因就调参数" class="headerlink" title="跳过归因就调参数"></a>跳过归因就调参数</h2><p>解析超时先别判定网络不通：配置缺失时，到 DNS 服务器的 ICMP 完全正常。RTT 低也别急着下判断，工具总耗时里可能藏着反查。几条常见的走偏：</p>
 <ol>
 <li><strong>看到超时就改 DNS 服务器地址</strong>。先确认本机有没有 nameserver、查询实际发往哪里，再比较候选服务器的 RTT 和丢包。</li>

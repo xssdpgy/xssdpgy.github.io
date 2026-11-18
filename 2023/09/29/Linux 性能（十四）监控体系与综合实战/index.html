@@ -250,7 +250,7 @@
                 <i class="far fa-file-word"></i>
               </span>
                 <span class="post-meta-item-text">本文字数：</span>
-              <span>3.3k</span>
+              <span>3.2k</span>
             </span>
             <span class="post-meta-item" title="阅读时长">
               <span class="post-meta-item-icon">
@@ -274,21 +274,16 @@
 
 <h2 id="USE-法与黄金指标"><a href="#USE-法与黄金指标" class="headerlink" title="USE 法与黄金指标"></a>USE 法与黄金指标</h2><p>系统监控看资源。USE 法把每种资源的指标压成三类：使用率是服务时间或容量占比，饱和度对应等待队列，错误数是出错事件数。CPU 看使用率、运行队列和硬件错误，内存看用量、换页和 OOM，磁盘看设备忙闲、等待队列和 I&#x2F;O 错误，网络看带宽、重传和丢包；文件描述符、连接数、连接跟踪这些软件资源也能套同一套。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-USE%E6%B3%95%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png" alt="USE 法按资源分类的指标表"></p>
-<p><em>USE 法按资源分类的指标表</em></p>
 <p>应用监控看请求。资源使用率低并不能说明应用正常，锁等待或下游 RPC 慢都会拖长响应。核心指标是请求数、错误数和响应时间；再往外补三层：进程资源占用用来和系统资源对齐，服务间调用的频率、错误与延迟用来定位调用链问题，核心逻辑的耗时与错误要靠应用自己暴露。跨服务的调用链用链路跟踪工具串起来，日志提供参数与上下文，指标解决「哪里慢」，日志回答「什么样的请求慢」。</p>
 <p>监控系统由采集、存储、查询处理、告警和可视化几块组成。采集有拉模式和推模式，目标动态变化时配合服务发现；时序库按时间追加写入，查询语言支撑告警规则与看板；告警要分组、抑制和静默，否则同类问题会把值班通知淹没。日志侧常用 ELK 或更轻量的 EFK，链路侧用 Jaeger 一类工具。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-Prometheus%E7%9B%91%E6%8E%A7%E6%9E%B6%E6%9E%84.png" alt="Prometheus 采集、存储、查询、告警与展示架构"></p>
-<p><em>Prometheus 采集、存储、查询、告警与展示架构</em></p>
 <h2 id="丢包与吞吐两条证据链"><a href="#丢包与吞吐两条证据链" class="headerlink" title="丢包与吞吐两条证据链"></a>丢包与吞吐两条证据链</h2><p>丢包案例从 hping3 开始：发十个 SYN 只收回五个，RTT 在三毫秒到三秒之间跳。包可能丢在链路、网卡环形缓冲、QoS、IP 分片、连接跟踪、端口监听、套接字缓冲或应用层，逐层查比凭猜测快。容器内 <code>netstat -i</code> 没有网卡错误，<code>tc -s qdisc</code> 却显示 eth0 上挂了 netem 规则，丢包率 30%。删掉规则后仍然丢包；<code>netstat -s</code> 里是连接失败、SYN 重传和半连接重置；回到主机查 conntrack，当前 182、上限 262144，排除表满；<code>iptables -nvL</code> 暴露出 INPUT 与 OUTPUT 链各有一条随机丢弃 30% 的规则。删掉两条规则，hping3 恢复零丢包。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E7%BD%91%E7%BB%9C%E5%90%84%E5%B1%82%E4%B8%A2%E5%8C%85%E4%BD%8D%E7%BD%AE.png" alt="网络收发各层可能发生丢包的位置"></p>
-<p><em>网络收发各层可能发生丢包的位置</em></p>
 <p>故事还没完。curl 访问 HTTP 仍然超时，hping3 却显示端口正常。抓包看到三次握手完成后，三秒内没有 GET，只有客户端发出的 FIN；<code>netstat -i</code> 的接收丢弃数涨到 344。两种工具的差别在于 curl 会携带 HTTP 数据，而 eth0 的 MTU 被设成了 100。改回以太网默认值后，请求正常返回。验证工具只覆盖到端口，就不足以宣布问题解决。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E4%B8%A2%E5%8C%85%E6%A1%88%E4%BE%8BTCP%E6%B5%81%E5%9B%BE.png" alt="三次握手后三秒关闭的 TCP 流图"></p>
-<p><em>三次握手后三秒关闭的 TCP 流图</em></p>
 <p>吞吐案例里，wrk 压 Nginx 加 PHP，初始每秒 189 个请求，响应全部异常。<code>ss -s</code> 显示大量 TIME_WAIT，<code>dmesg</code> 报 <code>table full</code>，连接跟踪上限与当前值都是 200；调大上限后吞吐到 5382，但四万多个响应仍异常。Nginx 日志里的 499 指向服务端处理太慢，PHP 日志提示 <code>max_children</code> 只有 5；调到 20 后成功请求从八千多涨到一万五。继续查 <code>netstat -s</code>，监听队列溢出次数持续上涨，<code>ss -ltnp</code> 里监听队列只有 10，调大应用 backlog 与系统 somaxconn。</p>
 <p>队列修好后响应又全部失败，Nginx 报 <code>EADDRNOTAVAIL</code>，临时端口范围只有 50 个。扩到一万多个端口后异常响应很少，但读错误增多；<code>top</code> 里系统 CPU 接近一半，火焰图热点落在 <code>inet_hash_connect</code> 和 <code>__init_check_established</code>。<code>ss -s</code> 显示三万多个 TIME_WAIT 仍占着端口，<code>tcp_tw_reuse</code> 处于关闭状态；打开后吞吐稳定在五千多，异常响应清零。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-%E5%90%9E%E5%90%90%E9%87%8F%E7%93%B6%E9%A2%88%E7%81%AB%E7%84%B0%E5%9B%BE.png" alt="吞吐量瓶颈中的端口分配调用栈"></p>
-<p><em>吞吐量瓶颈中的端口分配调用栈</em></p>
 <pre class="mermaid">
 flowchart TD
     A[&quot;现象：丢包或吞吐下降&quot;] --&gt; B[&quot;逐层取证据&quot;]
@@ -305,7 +300,6 @@ flowchart TD
 <figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">$ ss -s</span><br><span class="line">$ ss -ltnp</span><br><span class="line">$ dmesg | <span class="built_in">tail</span></span><br><span class="line">$ docker logs nginx --<span class="built_in">tail</span> 10</span><br><span class="line">$ sysctl -w net.core.somaxconn=65536</span><br><span class="line">$ perf record -g</span><br><span class="line">$ perf script -i ~/perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl &gt; nginx.svg</span><br></pre></td></tr></table></figure>
 
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-14-Jaeger%E8%B0%83%E7%94%A8%E9%93%BE%E7%A4%BA%E4%BE%8B.png" alt="Jaeger 调用链中定位到 Redis 超时"></p>
-<p><em>Jaeger 调用链中定位到 Redis 超时</em></p>
 <h2 id="指标堆叠的报警噪声"><a href="#指标堆叠的报警噪声" class="headerlink" title="指标堆叠的报警噪声"></a>指标堆叠的报警噪声</h2><p>监控建起来以后，常见的问题是指标太多、告警太碎。几条走偏：</p>
 <ol>
 <li><strong>只看使用率就下结论</strong>。使用率低时应用仍可能卡在锁或下游调用上，配合饱和度和错误数一起看。</li>
