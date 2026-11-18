@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言内存这一层有两种常见的坏法：一是分配了不释放，物理内存被一点点吃光；二是内存紧张时系统开始回收，把匿名页换到 Swap，换出换入都走磁盘，延迟跟着抖。这两种问题的现象都能落到本篇锚点上——CPU 三成、P99 却到 800 毫秒——但成因和查法完全不同。这篇先分清可回收的文件页和只能换出的匿名页，再用 memleak 和 Swap 两个案例走一遍从「内存在涨」到「是谁在涨、换出了谁」的路径，最">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（七）内存泄漏、Swap 与回收机制">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/15/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%83%EF%BC%89%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E3%80%81Swap%20%E4%B8%8E%E5%9B%9E%E6%94%B6%E6%9C%BA%E5%88%B6/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言内存这一层有两种常见的坏法：一是分配了不释放，物理内存被一点点吃光；二是内存紧张时系统开始回收，把匿名页换到 Swap，换出换入都走磁盘，延迟跟着抖。这两种问题的现象都能落到本篇锚点上——CPU 三成、P99 却到 800 毫秒——但成因和查法完全不同。这篇先分清可回收的文件页和只能换出的匿名页，再用 memleak 和 Swap 两个案例走一遍从「内存在涨」到「是谁在涨、换出了谁」的路径，最">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6%E6%B0%B4%E4%BD%8D%E9%98%88%E5%80%BC.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-NUMA%E6%9E%B6%E6%9E%84%E5%86%85%E5%AD%98%E5%9F%9F.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E6%B5%81%E7%A8%8B%E5%9B%BE.png">
+<meta property="article:published_time" content="2023-08-15T12:43:47.000Z">
+<meta property="article:modified_time" content="2023-08-15T12:43:47.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="内存">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6%E6%B0%B4%E4%BD%8D%E9%98%88%E5%80%BC.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/15/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%83%EF%BC%89%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E3%80%81Swap%20%E4%B8%8E%E5%9B%9E%E6%94%B6%E6%9C%BA%E5%88%B6/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（七）内存泄漏、Swap 与回收机制 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/15/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%83%EF%BC%89%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E3%80%81Swap%20%E4%B8%8E%E5%9B%9E%E6%94%B6%E6%9C%BA%E5%88%B6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（七）内存泄漏、Swap 与回收机制
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-15 20:43:47" itemprop="dateCreated datePublished" datetime="2023-08-15T20:43:47+08:00">2023-08-15</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.2k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>内存这一层有两种常见的坏法：一是分配了不释放，物理内存被一点点吃光；二是内存紧张时系统开始回收，把匿名页换到 Swap，换出换入都走磁盘，延迟跟着抖。这两种问题的现象都能落到本篇锚点上——CPU 三成、P99 却到 800 毫秒——但成因和查法完全不同。这篇先分清可回收的文件页和只能换出的匿名页，再用 memleak 和 Swap 两个案例走一遍从「内存在涨」到「是谁在涨、换出了谁」的路径，最后交代关 Swap、调 swappiness 这些手段各自的前提。</p>
+<span id="more"></span>
+
+<h2 id="匿名页与文件页"><a href="#匿名页与文件页" class="headerlink" title="匿名页与文件页"></a>匿名页与文件页</h2><p>内存回收要分两类页面。缓存和缓冲区属于文件页（File-backed Page），大部分可以直接清掉，下次需要时从磁盘重读；被改过还没落盘的脏页要先写回磁盘，靠应用调 fsync 或内核线程 pdflush 完成。文件映射页也归这一类，释放后从文件重新读回即可。</p>
+<p>应用动态分配的堆内存是匿名页（Anonymous Page），它很可能在下次还被访问，没法直接回收。Swap 就是给这类页面留的后路：把不常访问的匿名页写到磁盘，腾出内存给别人，下次访问时再换入。换出和换入合起来，等于把可用内存临时扩大了。</p>
+<p>回收什么时候启动，看剩余内存落在哪个水位。kswapd0 定期扫描，拿剩余内存 pages_free 和三个阈值比：</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E5%9B%9E%E6%94%B6%E6%B0%B4%E4%BD%8D%E9%98%88%E5%80%BC.png" alt="kswapd 内存回收的三个水位阈值"></p>
+<p><em>kswapd 内存回收的三个水位阈值</em></p>
+<p>低于 pages_min，进程可用的内存耗尽，只剩内核能分配；落在 min 和 pages_low 之间，压力偏大，kswapd0 开始回收，直到剩余内存回到 pages_high 以上；落在 low 和 high 之间，有压力但还能满足新请求；高于 high，没有压力。pages_low 和 pages_high 由 min 推导，min 本身通过 <code>/proc/sys/vm/min_free_kbytes</code> 间接设置。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;页分配请求&quot;] --&gt; B{剩余内存与水位比较}
+    B --&gt;|&quot;高于 high&quot;| C[&quot;无压力 直接分配&quot;]
+    B --&gt;|&quot;low 与 high 之间&quot;| D[&quot;可分配 轻度压力&quot;]
+    B --&gt;|&quot;低于 low&quot;| E[&quot;kswapd0 后台回收&quot;]
+    B --&gt;|&quot;直接回收也不够&quot;| F[&quot;直接回收 + 可能触发 OOM&quot;]
+    E --&gt; G[&quot;回收文件页 或换出匿名页到 Swap&quot;]
+</pre>
+
+<p>还有一层 NUMA 的影响。多处理器被划到不同 Node，每个 Node 有自己的本地内存和 DMA、NORMAL、MOVABLE 等内存域，水位是按 Node、按 Zone 分别算的。所以会出现整机剩余内存还很多、某个 Node 却开始 Swap 的情况——查水位得按 Node 看，不能只看全局。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-NUMA%E6%9E%B6%E6%9E%84%E5%86%85%E5%AD%98%E5%9F%9F.png" alt="NUMA 架构下每 Node 的本地内存与内存域"></p>
+<p><em>NUMA 架构下每 Node 的本地内存与内存域</em></p>
+<p>文件页和匿名页先回收谁，由 <code>/proc/sys/vm/swappiness</code> 决定，取值 0 到 100：数值越大越积极换出匿名页，越小越倾向回收文件页。这个数是权重，不是百分比，设成 0 也不代表绝不 Swap。</p>
+<h2 id="从内存增长到泄漏点"><a href="#从内存增长到泄漏点" class="headerlink" title="从内存增长到泄漏点"></a>从内存增长到泄漏点</h2><p>内存泄漏的判据是趋势，不是某一刻的占用。用一个每秒算一次斐波那契数的程序做例子：跑起来后盯着 free 那一列，它持续下降，buff&#x2F;cache 基本不动，说明系统用在别处的内存一直在涨。但这还不能断定是泄漏——程序用一个不断增长的数组缓存结果，也会看到同样的曲线。</p>
+<p>要往下走一步，得看分配和释放是否配对。堆内存由应用自己调 <code>free()</code> 回收，共享内存分配后忘了释放，后果和堆泄漏一样；栈内存由系统自动管理，只读段和数据段大小固定，这两类不会泄漏。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ vmstat 3</span><br><span class="line"> r b swpd free    buff cache    si so bi bo <span class="keyword">in</span> cs us sy <span class="built_in">id</span> wa st</span><br><span class="line"> 0 0 0    6601824 97620 1098788 0  0  0  0  62 322 0  0 100 0 0</span><br><span class="line"> 0 0 0    6601080 97628 1098792 0  0  0  0  56 285 0  0 100 0 0</span><br></pre></td></tr></table></figure>
+
+<p>memleak 能直接给出未释放内存的调用栈，比拿 top 输出写脚本比对方便。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ /usr/share/bcc/tools/memleak -a -p $(pidof app)</span><br><span class="line">40960 bytes <span class="keyword">in</span> 5 allocations from stack</span><br><span class="line">    fibonacci+0x1f [app]</span><br><span class="line">    child+0x4f [app]</span><br><span class="line">    start_thread+0xdb [libpthread-2.27.so]</span><br></pre></td></tr></table></figure>
+
+<p>调用栈指到 fibonacci() 分配的内存没被 child() 释放，回到源码补一个 <code>free()</code> 就修好了。这里有个容器场景的坑：memleak 在容器外跑，看不到容器里的 <code>/app</code> 路径，符号会显示成 <code>[unknown]</code>；把二进制文件从容器里拷到宿主机同路径，栈就能正常解析。</p>
+<h2 id="Swap-升高后的证据链"><a href="#Swap-升高后的证据链" class="headerlink" title="Swap 升高后的证据链"></a>Swap 升高后的证据链</h2><p>Swap 升高同样要从趋势入手。开启 8 GB 的 Swap 文件后，用一个 dd 读大文件的例子压内存，sar 同时看内存和 Swap 两组指标。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ sar -r -S 1</span><br><span class="line">04:39:57 kbmemfree kbavail kbbuffers kbcached %memused</span><br><span class="line">04:44:07 152780    6525716 6530440  51316    98.13</span><br><span class="line">04:44:07 kbswpfree kbswpused %swpused kbswpcad</span><br><span class="line">         8384508   4096     0.05     52</span><br></pre></td></tr></table></figure>
+
+<p>内存使用率从两成多涨到 98%，主要被缓冲区 kbbuffers 占着，Swap 才开始动。缓冲区里是谁，用 cachetop 定位到 dd 进程，命中率五成、未命中四万多页。接下来要回答的是：缓冲区明明是可回收的文件页，为什么系统不去回收它，反而动了匿名页的 Swap？</p>
+<p>答案在 <code>/proc/zoneinfo</code> 里。盯着 Normal 域的 pages_free 和三个水位看，会发现 pages_free 在小范围波动：低于 low 就触发回收，回收后跳回 high 以上，dd 继续写又把内存吃回缓存，如此往复。回收时文件页和匿名页都会动，所以缓冲区会缩、Swap 也会涨。用 watch 看这段变化最直观。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">$ watch -d grep -A 15 <span class="string">&#x27;Normal&#x27;</span> /proc/zoneinfo</span><br><span class="line">Node 0, zone Normal</span><br><span class="line">  pages free  21328</span><br><span class="line">  min         14896</span><br><span class="line">  low         18620</span><br><span class="line">  high        22344</span><br><span class="line">  nr_zone_inactive_anon  79776</span><br><span class="line">  nr_zone_active_anon    206854</span><br></pre></td></tr></table></figure>
+
+<p>最后要找出 Swap 换出的是谁，从每个进程的 <code>/proc/&lt;PID&gt;/status</code> 里读 VmSwap 排序。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="keyword">for</span> file <span class="keyword">in</span> /proc/*/status ; <span class="keyword">do</span></span><br><span class="line">    awk <span class="string">&#x27;/VmSwap|Name|^Pid/&#123;printf $2 &quot; &quot; $3&#125;END&#123;print &quot;&quot;&#125;&#x27;</span> <span class="variable">$file</span></span><br><span class="line">  <span class="keyword">done</span> | <span class="built_in">sort</span> -k 3 -n -r | <span class="built_in">head</span></span><br><span class="line">dockerd         2226 10728 kB</span><br><span class="line">docker-containe 2251  8516 kB</span><br></pre></td></tr></table></figure>
+
+<p>Swap 换出的是 dockerd 这类进程的内存，它们再访问时就会慢。整条链从 Swap 升高出发，用 sar 看趋势、cachetop 找缓存来源、zoneinfo 解释回收、VmSwap 定位受影响的进程。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-07-%E5%86%85%E5%AD%98%E9%97%AE%E9%A2%98%E6%8E%92%E6%9F%A5%E6%B5%81%E7%A8%8B%E5%9B%BE.png" alt="内存问题排查的工具流程图"></p>
+<p><em>内存问题排查的工具流程图</em></p>
+<h2 id="Swap-与泄漏的处理边界"><a href="#Swap-与泄漏的处理边界" class="headerlink" title="Swap 与泄漏的处理边界"></a>Swap 与泄漏的处理边界</h2><p>找到来源之后，处置也要讲条件。几种常见的走偏：</p>
+<ol>
+<li><strong>见 Swap 升高就关掉</strong>。Swap 升高只是内存紧张的结果，先查是谁在涨、回收为什么不回收文件页；直接关掉，压力会转移到 OOM，核心进程可能被杀。</li>
+<li><strong>把 swappiness 调到 0 当万能解</strong>。它是回收倾向的权重，不是开关；剩余内存加文件页低于高水位时，设成 0 照样发生 Swap。</li>
+<li><strong>拿 free 的剩余内存判断能不能分配</strong>。可回收缓存也算可用内存，看 available 才接近真实情况。</li>
+<li><strong>用 top 的单次快照断定泄漏</strong>。泄漏是趋势，一次快照高低说明不了问题，得用 vmstat 或 sar 看一段时间的曲线。</li>
+</ol>
+<p>什么时候不必动 Swap：内存充足、水位长期在 high 以上、swpused 始终为零，这时 Swap 配置本身不影响性能，调它没有收益。反过来，如果延迟敏感的应用跑在开了 Swap 的机器上，又不能关 Swap，可以用 mlock 或 mlockall 锁住它的内存，阻止换出——代价是这部分内存别人也拿不走。</p>
+<h2 id="内存问题速查表"><a href="#内存问题速查表" class="headerlink" title="内存问题速查表"></a>内存问题速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>下一步工具</th>
+<th>处置方向与代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>free 持续下降、cache 不变</td>
+<td>vmstat free 走低</td>
+<td>memleak 看分配栈</td>
+<td>补 free()，代价在源码改动</td>
+</tr>
+<tr>
+<td>符号显示 unknown</td>
+<td>memleak 报 &#x2F;app 找不到</td>
+<td>拷二进制到同路径</td>
+<td>补齐符号路径，代价在额外操作</td>
+</tr>
+<tr>
+<td>Swap 升高、内存吃满</td>
+<td>sar %memused 接近 100</td>
+<td>cachetop 找缓存大户</td>
+<td>查是谁在涨，再决定是否调回收</td>
+</tr>
+<tr>
+<td>剩余内存多仍 Swap</td>
+<td>zoneinfo 按 Node 看水位</td>
+<td>numactl 看 Node 分布</td>
+<td>查该 Node 的水位，别看全局</td>
+</tr>
+<tr>
+<td>缓冲区缩、Swap 涨</td>
+<td>pages_free 在 low 与 high 间波动</td>
+<td>cat swappiness</td>
+<td>调回收倾向，代价是换出倾向变化</td>
+</tr>
+<tr>
+<td>想知道谁被换出</td>
+<td>&#x2F;proc&#x2F;<PID>&#x2F;status</td>
+<td>按 VmSwap 排序</td>
+<td>锁定或迁移该进程</td>
+</tr>
+</tbody></table>
+<p>本篇锚点的「CPU 三成、P99 800 毫秒」，在内存这一层对应泄漏或换页两条路径。先 vmstat 看内存是不是持续在涨：涨且 cache 不动查泄漏，Swap 动查回收和受影响进程。确认成因再谈关 Swap、调 swappiness 或锁内存，顺序反了，参数留在机器上却解决不了延迟。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>内存回收分文件页和匿名页：文件页可直接回收或写回脏页后回收，匿名页要靠 Swap 换出到磁盘。kswapd0 按 pages_min、low、high 三个水位决定何时回收，水位按 Node 和内存域分别计算，NUMA 下要逐个 Node 看；swappiness 调节回收倾向，是权重不是开关。查泄漏看内存趋势，用 memleak 拿未释放内存的调用栈；查 Swap 用 sar 看趋势、cachetop 找缓存来源、zoneinfo 解释回收、VmSwap 定位受影响进程。关 Swap、调 swappiness、用 mlock 锁内存都有前提，先定位成因再动手。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/15/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%83%EF%BC%89%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E3%80%81Swap%20%E4%B8%8E%E5%9B%9E%E6%94%B6%E6%9C%BA%E5%88%B6/" title="Linux 性能（七）内存泄漏、Swap 与回收机制">https://xssdpgy.github.io/2023/08/15/Linux 性能（七）内存泄漏、Swap 与回收机制/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/%E5%86%85%E5%AD%98/" rel="tag"># 内存</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AD%EF%BC%89%E5%86%85%E5%AD%98%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86%E4%B8%8E%20Buffer%20Cache/" rel="prev" title="Linux 性能（六）内存工作原理与 Buffer Cache">
+      <i class="fa fa-chevron-left"></i> Linux 性能（六）内存工作原理与 Buffer Cache
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/" rel="next" title="Linux 性能（八）文件系统与磁盘 I O 工作原理">
+      Linux 性能（八）文件系统与磁盘 I O 工作原理 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8C%BF%E5%90%8D%E9%A1%B5%E4%B8%8E%E6%96%87%E4%BB%B6%E9%A1%B5"><span class="nav-text">匿名页与文件页</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%8E%E5%86%85%E5%AD%98%E5%A2%9E%E9%95%BF%E5%88%B0%E6%B3%84%E6%BC%8F%E7%82%B9"><span class="nav-text">从内存增长到泄漏点</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Swap-%E5%8D%87%E9%AB%98%E5%90%8E%E7%9A%84%E8%AF%81%E6%8D%AE%E9%93%BE"><span class="nav-text">Swap 升高后的证据链</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Swap-%E4%B8%8E%E6%B3%84%E6%BC%8F%E7%9A%84%E5%A4%84%E7%90%86%E8%BE%B9%E7%95%8C"><span class="nav-text">Swap 与泄漏的处理边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%86%85%E5%AD%98%E9%97%AE%E9%A2%98%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">内存问题速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '196613a7b547ad9a6cbe5ddb9b883a5e',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言前面几节按资源类型把 CPU 的坑挨个踩过：负载、上下文切换、软中断、找不到进程的短时进程。真到线上，指标和工具摆一屏，先跑哪个、看到什么往哪走，往往就卡在这儿。这篇把前面散落的判断收成一条路径：哪三个命令能覆盖大部分指标、指标之间怎么互相印证、找到瓶颈后又该怎么权衡优化手段。后半段落到 perf 这一层——符号丢了怎么办、Java 栈为什么看不到，以及绑核、优先级这些手段各自的代价。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（五）CPU 瓶颈定位与优化手段的代价">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/08/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%94%EF%BC%89CPU%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E4%BB%A3%E4%BB%B7/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言前面几节按资源类型把 CPU 的坑挨个踩过：负载、上下文切换、软中断、找不到进程的短时进程。真到线上，指标和工具摆一屏，先跑哪个、看到什么往哪走，往往就卡在这儿。这篇把前面散落的判断收成一条路径：哪三个命令能覆盖大部分指标、指标之间怎么互相印证、找到瓶颈后又该怎么权衡优化手段。后半段落到 perf 这一层——符号丢了怎么办、Java 栈为什么看不到，以及绑核、优先级这些手段各自的代价。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-CPU%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-%E4%B8%89%E5%B7%A5%E5%85%B7%E6%8C%87%E6%A0%87%E5%85%B3%E8%81%94%E5%9B%BE.png">
+<meta property="article:published_time" content="2023-08-08T13:30:42.000Z">
+<meta property="article:modified_time" content="2023-08-08T13:30:42.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="CPU">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-CPU%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/08/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%94%EF%BC%89CPU%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E4%BB%A3%E4%BB%B7/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（五）CPU 瓶颈定位与优化手段的代价 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/08/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%94%EF%BC%89CPU%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E4%BB%A3%E4%BB%B7/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（五）CPU 瓶颈定位与优化手段的代价
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-08 21:30:42" itemprop="dateCreated datePublished" datetime="2023-08-08T21:30:42+08:00">2023-08-08</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>前面几节按资源类型把 CPU 的坑挨个踩过：负载、上下文切换、软中断、找不到进程的短时进程。真到线上，指标和工具摆一屏，先跑哪个、看到什么往哪走，往往就卡在这儿。这篇把前面散落的判断收成一条路径：哪三个命令能覆盖大部分指标、指标之间怎么互相印证、找到瓶颈后又该怎么权衡优化手段。后半段落到 perf 这一层——符号丢了怎么办、Java 栈为什么看不到，以及绑核、优先级这些手段各自的代价。</p>
+<span id="more"></span>
+
+<h2 id="CPU-指标的分类"><a href="#CPU-指标的分类" class="headerlink" title="CPU 指标的分类"></a>CPU 指标的分类</h2><p>先把要看的东西分个类。CPU 性能口径说到底就四组：使用率、上下文切换、平均负载、缓存命中率。使用率再往下拆成用户态、系统态、等待 I&#x2F;O、软中断和硬中断，虚拟化环境里还有窃取和客户两类。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-CPU%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E5%88%86%E7%B1%BB.png" alt="CPU 性能指标分类脑图"></p>
+<p><em>CPU 性能指标分类脑图</em></p>
+<p>这些口径不是并列的孤立项，各自指向不同的层。用户 CPU 高，说明应用在用户态忙着算；系统 CPU 高，是内核态的事，比如频繁系统调用；iowait 高，CPU 其实在等硬件返回。把它们分开看，排查范围一下就缩小了——用户 CPU 高就别往内核态翻，iowait 高就别只盯进程列表。平均负载数的那三个值，是过去 1、5、15 分钟的平均活跃进程数，理想情况跟逻辑 CPU 个数相等。缓存命中率衡量的是 CPU 多级缓存的复用情况，L1、L2 在单核，L3 多核共享，命中率越低，CPU 等内存的时间越多。</p>
+<h2 id="三工具的指标关联"><a href="#三工具的指标关联" class="headerlink" title="三工具的指标关联"></a>三工具的指标关联</h2><p>指标知道怎么看，接下来是拿什么看。工具很多，真正常用的就那么几个，其中 top、vmstat、pidstat 三个覆盖面最广：top 给出各种使用率和僵尸进程、平均负载，vmstat 给出上下文切换次数、中断次数和运行&#x2F;不可中断进程数，pidstat 补上进程级的用户 CPU、系统 CPU 和两类切换。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-05-%E4%B8%89%E5%B7%A5%E5%85%B7%E6%8C%87%E6%A0%87%E5%85%B3%E8%81%94%E5%9B%BE.png" alt="top、vmstat、pidstat 三工具的 CPU 指标关联图"></p>
+<p><em>top、vmstat、pidstat 三工具的 CPU 指标关联图</em></p>
+<p>这张图更该当成一张路线图来读。虚线是指标之间的关联，也是下一步的方向。top 的用户 CPU 升高，就拿 pidstat 按进程对齐，找出是哪个进程在占；找到进程后再用 perf 看调用链、strace 看系统调用。top 的平均负载升高，对照 vmstat 的运行态和不可中断进程数：不可中断那一列涨了，转去查 I&#x2F;O，用 dstat、sar；运行态那一列涨了，回到 top 和 pidstat 找进程。top 的软中断高，查 <code>/proc/softirqs</code> 定类型，是网络接收就接 sar 和 tcpdump。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;top: CPU 使用率 &#x2F; 负载 &#x2F; 僵尸&quot;] --&gt; B{哪一类异常}
+    B --&gt;|&quot;用户 CPU 高&quot;| C[&quot;pidstat 按进程对齐&quot;]
+    B --&gt;|&quot;系统 CPU 高&quot;| D[&quot;strace 看系统调用&quot;]
+    B --&gt;|&quot;iowait 高&quot;| E[&quot;vmstat 看不可中断进程数&quot;]
+    B --&gt;|&quot;软中断高&quot;| F[&quot;&#x2F;proc&#x2F;softirqs 定类型&quot;]
+    C --&gt; G[&quot;perf 看调用链&quot;]
+    E --&gt; H[&quot;dstat &#x2F; sar 查 I&#x2F;O&quot;]
+    F --&gt; I[&quot;sar &#x2F; tcpdump 查网络&quot;]
+</pre>
+
+<p>思路是先用覆盖面广的工具把范围圈小，再换专门工具往下钻，而不是一上来十几个工具全跑一遍。前者快，后者既慢又容易在数字里漏掉关键的一项。</p>
+<h2 id="perf-采样与符号表"><a href="#perf-采样与符号表" class="headerlink" title="perf 采样与符号表"></a>perf 采样与符号表</h2><p>范围缩到某个进程后，perf 用来看它的调用链。常规做法是采样加报告两步：先 <code>record</code> 一段时间，再 <code>report</code> 展开。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ perf record -g -p 2663</span><br><span class="line">^C</span><br><span class="line">$ perf report</span><br></pre></td></tr></table></figure>
+
+<p>真正卡人的是符号。perf 界面里只看到一串十六进制地址而不是函数名，界面末行通常会有一句 <code>Failed to open ... continuing without symbols</code>，意思是找不到进程的依赖库。跑在容器里的应用最容易碰上，库和符号都在镜像里，宿主机上按路径找不到。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">Failed to open /opt/bitnami/php/lib/php/extensions/opcache.so, continuing without symbols</span><br></pre></td></tr></table></figure>
+
+<p>解决办法有几种，代价差别很大。在容器外照原路径补一套依赖库，能行，但要污染宿主机环境；进容器跑 perf，需要特权模式，生产里的普通容器通常给不了；把容器文件系统挂出来，用 <code>--symfs</code> 指过去，可行但要额外装工具。相对省事的是在宿主采样、把 <code>perf.data</code> 拷进容器，在容器里装 perf 再看报告。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ docker <span class="built_in">cp</span> perf.data phpfpm:/tmp</span><br><span class="line">$ docker <span class="built_in">exec</span> -i -t phpfpm bash</span><br><span class="line">$ <span class="built_in">cd</span> /tmp &amp;&amp; apt-get install -y linux-perf</span><br><span class="line">$ perf report</span><br></pre></td></tr></table></figure>
+
+<p>Java 应用另有一层麻烦。脚本跑在 JVM 上，系统调用栈拿到的是 JVM 的函数，看不到 Java 方法。perf 本身支持 JIT，但要有一份 <code>/tmp/perf-PID.map</code> 做符号翻译，通常由 perf-map-agent 生成，还得给 JVM 加 <code>-XX:+PreserveFramePointer</code> 保留帧指针。这一层配起来不轻，比普通进程的问题多出好几步。</p>
+<p>还有两个常被误读的地方。<code>perf report</code> 里 swapper 占九成多，看着吓人，它其实是系统的空闲任务，CPU 没别的活跑时才轮到它，可以直接略过；真正要看的是占比很小的应用符号。另外调用栈默认有个 0.5% 的显示阈值，占比 0.34% 的 app 展开就是空的，把阈值调低才有栈。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ perf report -g graph,0.3</span><br></pre></td></tr></table></figure>
+
+<h2 id="优化手段的适用条件"><a href="#优化手段的适用条件" class="headerlink" title="优化手段的适用条件"></a>优化手段的适用条件</h2><p>找到瓶颈之后，先别急着动手。优化前想清楚三件事：拿什么指标证明优化有效、同时冒出几个问题先动哪个、多种方法里选哪种。评估要跨应用和系统两个维度——应用看吞吐和延迟，系统看 CPU 使用率，只盯一边容易误判。多个问题并存时，先动变化幅度最大、又是因不是果的那个；系统资源已经打满的，优先处理资源本身。</p>
+<p>选方法的关键是先算代价。绑核把进程固定在几个 CPU 上，能提高缓存命中、减少跨核调度，前提是有核可绑；CPU 核数本来就少，绑完反而限制了调度余地。优先级用 nice 调整，把非核心应用压低、核心应用抬高，前提是分得清主次。cgroups 限额能挡住某个应用吃光资源，代价是配置和维护跟着增加。DPDK 绕开内核协议栈换吞吐，但要独占一个核加大页内存、始终跑满，核少时得不偿失。</p>
+<pre class="mermaid">
+flowchart LR
+    A[&quot;找出瓶颈&quot;] --&gt; B[&quot;量化前后指标&quot;]
+    B --&gt; C{&quot;多个问题并存&quot;}
+    C --&gt;|&quot;是&quot;| D[&quot;先动变化幅度最大且为因的那个&quot;]
+    C --&gt;|&quot;否&quot;| E{&quot;多种方法可选&quot;}
+    D --&gt; E
+    E --&gt; F[&quot;按代价与适用条件筛选&quot;]
+    F --&gt; G[&quot;小步优化后重新评估&quot;]
+</pre>
+
+<p>这些手段有个共同前提：确认了瓶颈再上。没有瓶颈就把优化一股脑堆上去，复杂度先涨上来，可维护性往下降，需求一变，这些优化反而挡路。</p>
+<h2 id="CPU-定位与优化速查表"><a href="#CPU-定位与优化速查表" class="headerlink" title="CPU 定位与优化速查表"></a>CPU 定位与优化速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>下一步工具</th>
+<th>优化方向与代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>用户 CPU 高</td>
+<td>top user 占大头</td>
+<td>pidstat 找进程、perf 看调用链</td>
+<td>改算法与循环，代价在改动量</td>
+</tr>
+<tr>
+<td>系统 CPU 高</td>
+<td>top sy 占大头</td>
+<td>strace 看系统调用</td>
+<td>减少系统调用与切换，代价在重构</td>
+</tr>
+<tr>
+<td>iowait 高</td>
+<td>wa 高、不可中断进程多</td>
+<td>dstat、sar 查磁盘</td>
+<td>缓存 I&#x2F;O 换直接 I&#x2F;O，代价在语义变化</td>
+</tr>
+<tr>
+<td>软中断高</td>
+<td>si 高</td>
+<td>&#x2F;proc&#x2F;softirqs 定类型</td>
+<td>按类型优化，网络类看包长与来源</td>
+</tr>
+<tr>
+<td>符号只有地址</td>
+<td>perf 报告无函数名</td>
+<td>–symfs 或容器内看报告</td>
+<td>保留符号表，代价是二进制变大</td>
+</tr>
+<tr>
+<td>Java 栈看不到</td>
+<td>只有 JVM 函数</td>
+<td>perf-map-agent 生成 map</td>
+<td>加帧指针选项，代价是额外工具链</td>
+</tr>
+</tbody></table>
+<p>本篇锚点那组数——CPU 30%、P99 800ms——落在「使用率不高但延迟高」这一格。按路线图，先看 user 和 sy 谁高、iowait 与 si 有没有冒尖，再决定往进程、I&#x2F;O 还是网络走；确认瓶颈之后再谈绑核还是调优先级，顺序反了，参数就会一直留在机器上却说不清有没有用。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>CPU 指标分使用率、上下文切换、平均负载、缓存命中率四类，彼此靠原理关联。排查用 top、vmstat、pidstat 圈定范围，再换 perf、strace、dstat、tcpdump 往专项里钻，比一上来全跑一遍更快。perf 采样后看不到函数名，多半是符号路径不对，容器应用尤其如此；Java 栈还要额外生成符号表并保留帧指针；报告里占比高的 swapper 是空闲任务，可以先略过。优化按「量化前后指标 → 挑影响最大的问题 → 按代价选方法」三步走，绑核、独占、优先级、DPDK 都有各自的前提，核数少、主次不清时收益会被代价吃掉。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/08/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%94%EF%BC%89CPU%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E4%BB%A3%E4%BB%B7/" title="Linux 性能（五）CPU 瓶颈定位与优化手段的代价">https://xssdpgy.github.io/2023/08/08/Linux 性能（五）CPU 瓶颈定位与优化手段的代价/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/CPU/" rel="tag"># CPU</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/02/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%9B%9B%EF%BC%89%E8%BD%AF%E4%B8%AD%E6%96%AD%E4%B8%8E%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5/" rel="prev" title="Linux 性能（四）软中断与中断升高的排查">
+      <i class="fa fa-chevron-left"></i> Linux 性能（四）软中断与中断升高的排查
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/08/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AD%EF%BC%89%E5%86%85%E5%AD%98%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86%E4%B8%8E%20Buffer%20Cache/" rel="next" title="Linux 性能（六）内存工作原理与 Buffer Cache">
+      Linux 性能（六）内存工作原理与 Buffer Cache <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#CPU-%E6%8C%87%E6%A0%87%E7%9A%84%E5%88%86%E7%B1%BB"><span class="nav-text">CPU 指标的分类</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%89%E5%B7%A5%E5%85%B7%E7%9A%84%E6%8C%87%E6%A0%87%E5%85%B3%E8%81%94"><span class="nav-text">三工具的指标关联</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#perf-%E9%87%87%E6%A0%B7%E4%B8%8E%E7%AC%A6%E5%8F%B7%E8%A1%A8"><span class="nav-text">perf 采样与符号表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E9%80%82%E7%94%A8%E6%9D%A1%E4%BB%B6"><span class="nav-text">优化手段的适用条件</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#CPU-%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">CPU 定位与优化速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'c11cb0b1896b408848d3ecfa2ba829ec',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

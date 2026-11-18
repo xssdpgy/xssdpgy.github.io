@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言网络慢经常被直接归到带宽不够，但同一台 4 核 8G 机器、同一块千兆网卡，压测从 300 QPS 提到 3000 QPS 后，P99 从 40 毫秒涨到 800 毫秒，CPU 只有三成。这时带宽灯没亮，延迟照样涨，原因可能在队列、缓冲区、连接模型，也可能在压测工具本身。这篇把收发路径、指标口径和分层基准放到一起，说明 C10K 到 C10M 各卡在哪一层，以及测出来的数该怎么读。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（十）网络协议栈与性能评估">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言网络慢经常被直接归到带宽不够，但同一台 4 核 8G 机器、同一块千兆网卡，压测从 300 QPS 提到 3000 QPS 后，P99 从 40 毫秒涨到 800 毫秒，CPU 只有三成。这时带宽灯没亮，延迟照样涨，原因可能在队列、缓冲区、连接模型，也可能在压测工具本身。这篇把收发路径、指标口径和分层基准放到一起，说明 C10K 到 C10M 各卡在哪一层，以及测出来的数该怎么读。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-Linux%E7%BD%91%E7%BB%9C%E6%A0%88%E5%88%86%E5%B1%82.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E7%BD%91%E7%BB%9C%E5%8C%85%E6%94%B6%E5%8F%91%E4%B8%8E%E5%B0%81%E8%A3%85%E6%B5%81%E7%A8%8B.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E4%B8%BB%E8%BF%9B%E7%A8%8B%E4%B8%8Eworker%E6%A8%A1%E5%9E%8B.png">
+<meta property="article:published_time" content="2023-08-30T07:39:49.000Z">
+<meta property="article:modified_time" content="2023-08-30T07:39:49.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="网络">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-Linux%E7%BD%91%E7%BB%9C%E6%A0%88%E5%88%86%E5%B1%82.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（十）网络协议栈与性能评估 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（十）网络协议栈与性能评估
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-30 15:39:49" itemprop="dateCreated datePublished" datetime="2023-08-30T15:39:49+08:00">2023-08-30</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.7k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>网络慢经常被直接归到带宽不够，但同一台 4 核 8G 机器、同一块千兆网卡，压测从 300 QPS 提到 3000 QPS 后，P99 从 40 毫秒涨到 800 毫秒，CPU 只有三成。这时带宽灯没亮，延迟照样涨，原因可能在队列、缓冲区、连接模型，也可能在压测工具本身。这篇把收发路径、指标口径和分层基准放到一起，说明 C10K 到 C10M 各卡在哪一层，以及测出来的数该怎么读。</p>
+<span id="more"></span>
+
+<h2 id="网络栈的四层结构"><a href="#网络栈的四层结构" class="headerlink" title="网络栈的四层结构"></a>网络栈的四层结构</h2><p>日常说的二层、三层、四层、七层来自 OSI 七层模型，Linux 实际实现的是更实用的 TCP&#x2F;IP 四层：应用层放 HTTP、DNS 这类协议，传输层管端到端通信，网络层负责封装、寻址和路由，网络接口层处理 MAC 寻址与网卡收发。谈到七层负载均衡时，指的是 OSI 的应用层；落到协议栈上，它对应 TCP&#x2F;IP 的应用层。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-Linux%E7%BD%91%E7%BB%9C%E6%A0%88%E5%88%86%E5%B1%82.png" alt="Linux 网络栈分层结构"></p>
+<p><em>Linux 网络栈分层结构</em></p>
+<p>应用数据向下走时，每层只在前后加上固定格式的头尾：传输层加 TCP 头，网络层加 IP 头，网络接口层加帧头和帧尾，原始负载本身不改。链路能传的帧有上限，MTU 规定了 IP 包的最大尺寸，以太网默认 1500 字节。超过这个尺寸就要在网络层分片，分片越多，收发两端的重组开销越大。调 MTU 之前先看路径上有没有叠加网络，端到端任何一段不支持，调了也白调。</p>
+<p>收发过程中涉及三类缓冲区，位置容易搞混。网卡通过 DMA 交互的环形缓冲区由网卡驱动管理；网卡中断处理程序分配 <code>sk_buff</code> 承载网络帧，各层之间传递时只改指针，不反复复制数据；套接字缓冲区由应用按连接设置大小，发送数据是往里写，接收数据是从里读。这些缓冲区都在内核管理的内存里，<code>sk_buff</code>、连接跟踪等通过 slab 分配器管理，可以在 <code>/proc/slabinfo</code> 看占用。</p>
+<p>网络包的处理跨了硬中断和软中断：网卡硬中断只做最核心的读取或发送，协议栈的大部分逻辑留给软中断。每个 CPU 绑一个 <code>ksoftirqd</code> 线程处理软中断，硬中断、<code>kworker</code> 等机制一起配合，看到某个 CPU 的软中断占用高，先查网络收发是否集中在那一核。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E7%BD%91%E7%BB%9C%E5%8C%85%E6%94%B6%E5%8F%91%E4%B8%8E%E5%B0%81%E8%A3%85%E6%B5%81%E7%A8%8B.png" alt="网络包接收与发送时的逐层封装"></p>
+<p><em>网络包接收与发送时的逐层封装</em></p>
+<h2 id="千兆网卡的基准量级"><a href="#千兆网卡的基准量级" class="headerlink" title="千兆网卡的基准量级"></a>千兆网卡的基准量级</h2><p>接收方向：网卡把帧 DMA 到收包队列，硬中断触发后分配 <code>sk_buff</code>，再用软中断通知内核；链路层验合法性、认出上层协议并去掉帧头，网络层判断转发还是本机接收，传输层按源 IP、源端口、目的 IP、目的端口四元组找到套接字，把数据放进接收缓存，应用才读得到。发送方向反过来：<code>sendmsg</code> 进入套接字层，写入发送缓冲，逐层加头、查路由、按 MTU 分片，网络接口层找到下一跳 MAC 并加上帧头帧尾放进发包队列，软中断通知驱动，驱动用 DMA 发出去。</p>
+<pre class="mermaid">
+flowchart LR
+    subgraph RX[&quot;接收&quot;]
+        A1[&quot;网卡 DMA 收包&quot;] --&gt; A2[&quot;硬中断分配 sk_buff&quot;]
+        A2 --&gt; A3[&quot;软中断进协议栈&quot;]
+        A3 --&gt; A4[&quot;四元组找套接字&quot;]
+        A4 --&gt; A5[&quot;应用读取&quot;]
+    end
+    subgraph TX[&quot;发送&quot;]
+        B1[&quot;应用 sendmsg&quot;] --&gt; B2[&quot;套接字发送缓冲&quot;]
+        B2 --&gt; B3[&quot;逐层封装与分片&quot;]
+        B3 --&gt; B4[&quot;发包队列与软中断&quot;]
+        B4 --&gt; B5[&quot;网卡 DMA 发出&quot;]
+    end
+</pre>
+
+<p>把量级摊开看，C10K 指的是单机一万并发连接。按 2GB 内存、千兆网卡的老配置算，每连接只要低于 200KB 内存和 100Kbit 带宽，物理资源就够，卡点在同步阻塞模型：一请求一线程，一万个线程的调度和上下文切换先撑不住。I&#x2F;O 多路复用让一个线程盯一批套接字，<code>select</code> 和 <code>poll</code> 需要轮询描述符集合，还要在用户态和内核态之间来回拷贝；<code>epoll</code> 在内核里用红黑树管理描述符，只处理有事件的那些，轮询的开销省掉了。</p>
+<p>有了多路复用，还要定工作模型。主进程初始化套接字、管理子进程，worker 进程各自处理请求，这是反向代理常见的结构；多个 worker 同时等待同一个事件会惊群，需要锁或独占选项来约束。另一种是多个进程各监听同一端口，由内核分发连接，少了应用侧抢锁这一步。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-10-%E4%B8%BB%E8%BF%9B%E7%A8%8B%E4%B8%8Eworker%E6%A8%A1%E5%9E%8B.png" alt="主进程加多个 worker 的请求处理模型"></p>
+<p><em>主进程加多个 worker 的请求处理模型</em></p>
+<p>从 C10K 到十万并发，多数情况加物理资源、沿用多路复用就能过。到一百万并发，账就变了：每个连接 16KB 内存意味着约 15GB；按两成连接活跃、每连接每秒 1KB 算，吞吐量要 1.6Gb&#x2F;s，千兆网卡接不住。文件描述符数量、连接跟踪、协议栈缓存、多队列网卡、软中断负载均衡、TSO&#x2F;GRO 这类卸载都要一起考虑。再往上到千万并发，协议栈路径本身成了负担，DPDK 跳过内核协议栈在用户态轮询收包，XDP 在包进协议栈之前处理；更多场景直接把请求分摊到多台机器，改动比单机极限优化小得多。</p>
+<h2 id="ip-与-sar-的观测"><a href="#ip-与-sar-的观测" class="headerlink" title="ip 与 sar 的观测"></a>ip 与 sar 的观测</h2><p>先看接口配置和收发统计。<code>ip -s</code> 比 <code>ifconfig</code> 给的信息更细，<code>LOWER_UP</code> 表示物理链路连通，<code>mtu</code> 是最大传输单元，RX&#x2F;TX 下的 <code>errors</code>、<code>dropped</code>、<code>overruns</code>、<code>carrier</code> 只要非零，就说明链路上有丢包或错误，得先定位这一层。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">$ ip -s addr show dev eth0</span><br><span class="line">2: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc mq state UP qlen 1000</span><br><span class="line">    inet 10.240.0.30/12 brd 10.255.255.255 scope global eth0</span><br><span class="line">    RX: bytes  packets errors dropped overrun mcast</span><br><span class="line">        9542432350 40809397 0 0 0 193</span><br><span class="line">    TX: bytes  packets errors dropped carrier collsns</span><br><span class="line">        4815625265 32637658 0 0 0 0</span><br><span class="line"></span><br><span class="line">$ ethtool eth0 | grep Speed</span><br><span class="line">    Speed: 1000Mb/s</span><br></pre></td></tr></table></figure>
+
+<p>再看套接字和协议栈。监听状态（LISTEN）下 <code>Recv-Q</code> 显示当前半连接队列长度，<code>Send-Q</code> 是它的上限；已连接状态下两者分别对应未被应用取走的字节数和未被对端确认的字节数。队列持续非零，说明包在堆积。<code>netstat -s</code> 里的重传段数、<code>ss -s</code> 的连接汇总，用来判断是握手阶段的问题还是传输阶段的问题。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">$ ss -ltnp | <span class="built_in">head</span> -n 3</span><br><span class="line">State  Recv-Q Send-Q Local Address:Port  Peer Address:Port</span><br><span class="line">LISTEN 0      128    0.0.0.0:22         0.0.0.0:*  <span class="built_in">users</span>:((<span class="string">&quot;sshd&quot;</span>,pid=1459,fd=3))</span><br><span class="line"></span><br><span class="line">$ netstat -s | grep -i retransmit</span><br><span class="line">    44438 segments retransmitted</span><br><span class="line"></span><br><span class="line">$ sar -n DEV 1</span><br><span class="line"> IFACE  rxpck/s  txpck/s  rxkB/s  txkB/s  %ifutil</span><br><span class="line"> eth0    18.00    20.00    5.79    4.25     0.00</span><br></pre></td></tr></table></figure>
+
+<p><code>%ifutil</code> 是接口使用率，全双工下按收发两个方向里较大的那个算。它跟吞吐量各有用途：吞吐量要用 <code>sar</code> 的 <code>rxkB/s</code>、<code>txkB/s</code> 或 <code>ethtool</code> 查到的链路速率换算，PPS 看 <code>rxpck/s</code>、<code>txpck/s</code>。小包转发看 PPS 更准，大文件传输看吞吐更准，Web 服务最终还是要看 QPS 和延迟分布。</p>
+<p>基准测试要按层选工具。网络层和接口层看 PPS，可以把 <code>pktgen</code> 模块加载后通过 <code>/proc/net/pktgen</code> 配置发包，构造 64 字节小包测转发上限；传输层用 iperf 跑 TCP 吞吐，一端起服务端、另一端起客户端；应用层用 wrk 或压测脚本带真实请求负载，避免工具先成为瓶颈。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">$ modprobe pktgen</span><br><span class="line">$ <span class="built_in">ls</span> /proc/net/pktgen/</span><br><span class="line">kpktgend_0  kpktgend_1  pgctrl</span><br><span class="line"></span><br><span class="line">$ iperf3 -s -i 1 -p 10000</span><br><span class="line">$ iperf3 -c 192.168.0.30 -b 1G -t 15 -P 2 -p 10000</span><br><span class="line">$ wrk -c 1000 -t 2 -s auth.lua http://192.168.0.30/</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"># iperf 报告末行</span><br><span class="line">[SUM] 0.00-15.04 sec  1.51 GBytes  860 Mbits/sec  receiver</span><br><span class="line"></span><br><span class="line"># pktgen 报告末行</span><br><span class="line">Result: OK: 1000000 (64byte,0frags)  120191pps  61Mb/sec  errors: 0</span><br></pre></td></tr></table></figure>
+
+<p>同一台机器，ab 跑静态页面可能只有一千多请求每秒，换成带 Lua 脚本的 wrk 能到九千多。差距来自工具能发出的负载：ab 没带真实请求体，wrk 按脚本构造。测出来的低值如果来自工具，拿它当容量规划基线会得出偏小的结论。</p>
+<h2 id="带宽与吞吐的混淆"><a href="#带宽与吞吐的混淆" class="headerlink" title="带宽与吞吐的混淆"></a>带宽与吞吐的混淆</h2><p><code>Speed: 1000Mb/s</code> 是链路标称值，实际吞吐要看协议开销、包大小、最窄一跳和压测工具，拿标称值减去一点余量当上限，基线从一开始就偏了。几种常见的走偏：</p>
+<ol>
+<li><strong>只盯带宽</strong>。小包场景 IOPS 思路不适用，该看 PPS；大流场景才看吞吐。两个指标混用，测得的数没法横向比。</li>
+<li><strong>端口数当成连接上限</strong>。16 位端口号确实只有 65535 个，这是单个客户端 IP 发起连接时的限制；服务端按五元组区分连接，可接的数量大得多，实际受资源和协议栈性能约束。</li>
+<li><strong>看到队列非零就加缓冲</strong>。缓冲区调大能吸收突发，也会拉长排队时间，P99 跟着上去；先把堆积来源查清楚。</li>
+<li><strong>直接进入百万并发优化</strong>。连接数离目标还远时，多队列网卡、中断绑定、卸载这些改动带来的复杂度，多半换不来可测的收益。</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>该查什么</th>
+<th>先不必做什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>延迟涨、CPU 闲</td>
+<td>接口丢包计数、重传、队列堆积</td>
+<td>直接判定带宽不足</td>
+</tr>
+<tr>
+<td>吞吐到不了标称值</td>
+<td>包大小、对端速率、压测工具上限</td>
+<td>按标称值算容量</td>
+</tr>
+<tr>
+<td>单个 CPU 软中断高</td>
+<td>网卡队列与 CPU 绑定关系</td>
+<td>无差别调高缓冲区</td>
+</tr>
+<tr>
+<td>连接数上不去</td>
+<td>文件描述符限制、半连接队列、端口占用</td>
+<td>立刻上 DPDK 或 XDP</td>
+</tr>
+<tr>
+<td>压测结果偏低</td>
+<td>工具本身能发出的并发与负载</td>
+<td>直接改应用代码</td>
+</tr>
+</tbody></table>
+<h2 id="网络评估速查表"><a href="#网络评估速查表" class="headerlink" title="网络评估速查表"></a>网络评估速查表</h2><table>
+<thead>
+<tr>
+<th>层次</th>
+<th>核心指标</th>
+<th>观测或测试工具</th>
+<th>读数要点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>接口</td>
+<td>收发速率、错误、丢包</td>
+<td><code>ip -s</code>、<code>sar -n DEV</code></td>
+<td>错误与丢弃非零先查链路</td>
+</tr>
+<tr>
+<td>网络层</td>
+<td>PPS、转发能力</td>
+<td><code>pktgen</code>、hping3</td>
+<td>64 字节小包贴近转发上限</td>
+</tr>
+<tr>
+<td>传输层</td>
+<td>TCP 吞吐、重传</td>
+<td>iperf、<code>netstat -s</code></td>
+<td>吞吐对比标称值要留余量</td>
+</tr>
+<tr>
+<td>套接字</td>
+<td>队列长度、连接数</td>
+<td><code>ss</code>、<code>netstat</code></td>
+<td>监听态看半连接队列</td>
+</tr>
+<tr>
+<td>应用层</td>
+<td>QPS、延迟分布、错误数</td>
+<td>wrk、压测脚本</td>
+<td>负载要贴近真实请求</td>
+</tr>
+</tbody></table>
+<p>本篇锚点那组 P99 800 毫秒、CPU 三成的结果，落到这张表上依次核对：接口有没有丢包，重传有没有涨，队列有没有堆，压测工具自身能不能发出目标并发。四层读数都正常，再往应用逻辑里查。按这个顺序走，网络这一层能不能排除才有依据。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>Linux 网络按 TCP&#x2F;IP 四层实现，数据在每层加头加尾，超过 MTU 就分片；收发的环形缓冲区、<code>sk_buff</code> 和套接字缓冲区都在内核管理的内存里，硬中断只做核心动作，大部分处理落在软中断。千兆网卡下 C10K 的瓶颈在同步阻塞模型，多路复用和合适的工作模型能解决；到百万并发要连内存、带宽、文件描述符、连接跟踪和中断卸载一起算；到千万级才需要绕过协议栈。评估时按接口、网络层、传输层、应用层逐层取基准，带宽、吞吐、PPS、QPS 各管一段，别拿标称值或压测工具的上限当系统能力。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/" title="Linux 性能（十）网络协议栈与性能评估">https://xssdpgy.github.io/2023/08/30/Linux 性能（十）网络协议栈与性能评估/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E7%BD%91%E7%BB%9C/" rel="tag"># 网络</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/" rel="prev" title="Linux 性能（九）I O 瓶颈定位与优化">
+      <i class="fa fa-chevron-left"></i> Linux 性能（九）I O 瓶颈定位与优化
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/" rel="next" title="Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS">
+      Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%BD%91%E7%BB%9C%E6%A0%88%E7%9A%84%E5%9B%9B%E5%B1%82%E7%BB%93%E6%9E%84"><span class="nav-text">网络栈的四层结构</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8D%83%E5%85%86%E7%BD%91%E5%8D%A1%E7%9A%84%E5%9F%BA%E5%87%86%E9%87%8F%E7%BA%A7"><span class="nav-text">千兆网卡的基准量级</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#ip-%E4%B8%8E-sar-%E7%9A%84%E8%A7%82%E6%B5%8B"><span class="nav-text">ip 与 sar 的观测</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B8%A6%E5%AE%BD%E4%B8%8E%E5%90%9E%E5%90%90%E7%9A%84%E6%B7%B7%E6%B7%86"><span class="nav-text">带宽与吞吐的混淆</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%BD%91%E7%BB%9C%E8%AF%84%E4%BC%B0%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">网络评估速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'f0708f91c9139dc1b733c07953b0770b',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

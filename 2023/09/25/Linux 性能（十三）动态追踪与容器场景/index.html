@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言有些问题靠指标找不到答案：容器里的应用启动一次要二十多秒，日志却显示一切正常；内核线程占着三成 CPU，进程级工具挂不上去。前者要从容器边界和 cgroup 限额看，后者要直接观察内核函数的执行路径。这篇把动态追踪的事件源和工具摆在一起，再用两组实验说明怎么把「慢」拆到某个函数、某段等待，最后交代调试符号、开销和容器场景的边界。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（十三）动态追踪与容器场景">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/09/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%89%EF%BC%89%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E4%B8%8E%E5%AE%B9%E5%99%A8%E5%9C%BA%E6%99%AF/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言有些问题靠指标找不到答案：容器里的应用启动一次要二十多秒，日志却显示一切正常；内核线程占着三成 CPU，进程级工具挂不上去。前者要从容器边界和 cgroup 限额看，后者要直接观察内核函数的执行路径。这篇把动态追踪的事件源和工具摆在一起，再用两组实验说明怎么把「慢」拆到某个函数、某段等待，最后交代调试符号、开销和容器场景的边界。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E5%9C%BA%E6%99%AF%E4%B8%8E%E5%B7%A5%E5%85%B7.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-ksoftirqd%E7%81%AB%E7%84%B0%E5%9B%BE.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%86%85%E6%A0%B8%E7%BA%BF%E7%A8%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-Docker%E7%BD%91%E6%A1%A5%E4%B8%8EDNAT%E8%B7%AF%E5%BE%84.png">
+<meta property="article:published_time" content="2023-09-25T14:16:43.000Z">
+<meta property="article:modified_time" content="2023-09-25T14:16:43.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="动态追踪">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E5%9C%BA%E6%99%AF%E4%B8%8E%E5%B7%A5%E5%85%B7.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/09/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%89%EF%BC%89%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E4%B8%8E%E5%AE%B9%E5%99%A8%E5%9C%BA%E6%99%AF/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（十三）动态追踪与容器场景 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/09/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%89%EF%BC%89%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E4%B8%8E%E5%AE%B9%E5%99%A8%E5%9C%BA%E6%99%AF/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（十三）动态追踪与容器场景
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-09-25 22:16:43" itemprop="dateCreated datePublished" datetime="2023-09-25T22:16:43+08:00">2023-09-25</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.6k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>有些问题靠指标找不到答案：容器里的应用启动一次要二十多秒，日志却显示一切正常；内核线程占着三成 CPU，进程级工具挂不上去。前者要从容器边界和 cgroup 限额看，后者要直接观察内核函数的执行路径。这篇把动态追踪的事件源和工具摆在一起，再用两组实验说明怎么把「慢」拆到某个函数、某段等待，最后交代调试符号、开销和容器场景的边界。</p>
+<span id="more"></span>
+
+<h2 id="动态追踪的事件源"><a href="#动态追踪的事件源" class="headerlink" title="动态追踪的事件源"></a>动态追踪的事件源</h2><p>动态追踪在系统正常运行时通过探针采集行为，不用改代码、不用重启服务。事件源分三类：硬件事件来自性能监控计数器，覆盖缓存、指令周期、分支预测；静态探针事先写进代码，常见的有内核跟踪点和用户态的 USDT；动态探针在运行时挂到函数入口或返回处，内核侧叫 kprobes，用户态叫 uprobes。</p>
+<p>USDT 要求应用自己埋点，数据库类软件常内置；kprobes 与 uprobes 可以在运行时挂到任意函数，灵活性更高，代价是要拿到符号。工具建立在探针之上。<code>ftrace</code> 通过 <code>/sys/kernel/debug/tracing</code> 下的文件交互，<code>function_graph</code> 能给出调用关系；<code>perf</code> 采样事件，也能用 <code>perf probe</code> 加自定义探针；<code>eBPF</code> 在内核里跑自定义程序，<code>BCC</code> 把编译和加载包装成 Python 接口；<code>SystemTap</code> 把脚本编译成内核模块再插入；<code>sysdig</code> 面向容器场景。多数性能问题用 <code>perf</code> 加火焰图就够，需要按 I&#x2F;O 大小这类维度做统计时再写脚本。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E5%9C%BA%E6%99%AF%E4%B8%8E%E5%B7%A5%E5%85%B7.png" alt="常见动态追踪场景与推荐工具"></p>
+<p><em>常见动态追踪场景与推荐工具</em></p>
+<h2 id="容器冷启动的等待分布"><a href="#容器冷启动的等待分布" class="headerlink" title="容器冷启动的等待分布"></a>容器冷启动的等待分布</h2><p>一个容器化应用启动后，客户端先收到连接重置，等待二十多秒才拿到一次响应，随后容器退出。<code>docker logs</code> 里只有启动完成的记录，看不出原因；<code>docker inspect</code> 显示 <code>OOMKilled</code> 为真、退出码 137。内核日志进一步指出，OOM 发生在 cgroup 内存限制处：容器限额 512 MB，进程匿名内存加页内存已经顶到 524 MB。</p>
+<p>再看 JVM 的堆设置，最大堆接近 2 GB。容器内部看到的可用内存仍是主机规格，运行时按主机内存推算堆上限，和 cgroup 限额对不上。显式给堆设置与容器限额一致的上限后，应用能稳定响应。这里的判断依据是容器边界：限额写在外层，进程看到的是另一套数字。</p>
+<p>启动仍然要二十多秒。<code>top</code> 里 CPU 总体空闲，java 进程只占一成；在启动过程中用 <code>pidstat -t</code> 看线程，部分线程的等待列接近 97%，CPU 使用列却很低。容器的 CPU 份额被设成 0.1 个核，线程大量时间耗在等调度。把份额提到一个核，同样的应用两秒启动完成。去掉限额能让容器跑得更快，代价是任何应用异常都可能拖垮整机，这个交换通常不划算。</p>
+<p>冷启动拆开看还有更多段落：事件触发、资源调度、镜像拉取、网络配置、应用启动。用链路跟踪记录每段耗时，找出占大头的那一段；镜像拉取慢就缓存热点镜像，网络配置慢就预分配资源，调度和启动慢就复用预创建的容器。跨段的耗时数字比单点火焰图更适合定位冷启动。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;启动慢&quot;] --&gt; B[&quot;容器外：inspect 与 dmesg&quot;]
+    B --&gt; C{&quot;有 OOM 记录&quot;}
+    C --&gt;|&quot;有&quot;| D[&quot;对齐运行时内存上限与 cgroup 限额&quot;]
+    C --&gt;|&quot;无&quot;| E[&quot;启动中 pidstat -t 看 %wait&quot;]
+    E --&gt; F[&quot;等待高：查 CPU 份额&quot;]
+    F --&gt; G[&quot;限额调整后按同一流程复测&quot;]
+</pre>
+
+<h2 id="perf-与火焰图命令"><a href="#perf-与火焰图命令" class="headerlink" title="perf 与火焰图命令"></a>perf 与火焰图命令</h2><p>内核线程高 CPU 这一类，先看线程属于谁。<code>kthreadd</code> 是内核线程的管理者，<code>ksoftirqd</code> 每核一个，<code>kswapd0</code> 管回收，<code>kworker</code> 跑工作队列，<code>jbd2</code> 管文件系统日志。名称在 <code>ps</code> 输出里带中括号。<code>pstack</code> 挂不上内核线程，<code>/proc/&lt;pid&gt;/stack</code> 只给几层通用栈，这时用 <code>perf</code> 采样。实验用两台机器，一台跑服务，另一台发小包压测：两个 CPU 的软中断占比都超过三成，进程列表最前面是 <code>ksoftirqd</code>。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ ps -f --ppid 2 -p 2</span><br><span class="line">$ top</span><br><span class="line">$ perf record -a -g -p 9 -- <span class="built_in">sleep</span> 30</span><br><span class="line">$ perf report -g graph,0</span><br><span class="line">$ perf script -i /root/perf.data | ./stackcollapse-perf.pl --all | ./flamegraph.pl &gt; ksoftirqd.svg</span><br></pre></td></tr></table></figure>
+
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-ksoftirqd%E7%81%AB%E7%84%B0%E5%9B%BE.png" alt="ksoftirqd 采样生成的 CPU 火焰图"></p>
+<p><em>ksoftirqd 采样生成的 CPU 火焰图</em></p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-%E5%86%85%E6%A0%B8%E7%BA%BF%E7%A8%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="服务端与压测客户端的实验拓扑"></p>
+<p><em>服务端与压测客户端的实验拓扑</em></p>
+<p>火焰图从下往上看，下面一层是上面一层的父调用；同一层按函数名排序，宽度对应采样占比。展开最宽的那条路径，能看到收包、网桥、Netfilter 到转发的连续调用，其余小火焰里还有 TCP 与连接跟踪的函数。报告里的热点调用链从 <code>net_rx_action</code>、<code>netif_receive_skb</code> 到 <code>br_handle_frame</code>、<code>br_nf_pre_routing</code>，再经 <code>br_pass_frame_up</code> 到 <code>ip_forward</code>。收包、网桥、Netfilter 钩子连在一起，对应容器网络经 veth 到 docker0 网桥的路径；结合压测端发出的 SYN 小包，软中断升高就有了具体来源。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-13-Docker%E7%BD%91%E6%A1%A5%E4%B8%8EDNAT%E8%B7%AF%E5%BE%84.png" alt="容器、veth、docker0 网桥与 DNAT 规则的位置"></p>
+<p><em>容器、veth、docker0 网桥与 DNAT 规则的位置</em></p>
+<p>需要看某个函数的参数或返回值时，用 <code>perf probe</code> 挂动态探针；<code>perf trace</code> 提供系统调用视图，走的是内核事件，开销比基于 ptrace 的 <code>strace</code> 小。<code>ftrace</code> 的五步操作可以用 <code>trace-cmd</code> 收成两条命令。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">$ perf probe --add <span class="string">&#x27;do_sys_open filename:string&#x27;</span></span><br><span class="line">$ perf record -e probe:do_sys_open -aR <span class="built_in">ls</span></span><br><span class="line">$ perf script</span><br><span class="line">$ perf probe --del probe:do_sys_open</span><br><span class="line">$ <span class="built_in">cd</span> /sys/kernel/debug/tracing</span><br><span class="line">$ trace-cmd record -p function_graph -g do_sys_open -O funcgraph-proc <span class="built_in">ls</span></span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ls 13596 [000] 91846.053995: probe:do_sys_open: filename_string=&quot;/etc/ld.so.cache&quot;</span><br></pre></td></tr></table></figure>
+
+<h2 id="追踪工具的适用边界"><a href="#追踪工具的适用边界" class="headerlink" title="追踪工具的适用边界"></a>追踪工具的适用边界</h2><p>追踪本身会改变被测对象，符号和数据量也会限制结论。几种常见的走偏：</p>
+<ol>
+<li><strong>高并发进程上长期挂 strace</strong>。它基于 ptrace，事件多时内核态与用户态切换频繁，还会用信号挂起目标进程；性能敏感的服务改用 <code>perf trace</code>。</li>
+<li><strong>没有调试符号就下结论</strong>。输出里只有十六进制地址，函数名和参数都看不到；内核要装调试符号包，应用要用带符号的二进制或源码加 <code>-g</code> 重新编译。</li>
+<li><strong>把火焰图当作时间顺序图</strong>。横轴是采样占比，纵轴是调用栈，图里没有任何时间先后信息；要看时序得回到抓包或链路跟踪。</li>
+<li><strong>生产环境全量长时间追踪</strong>。事件量越大开销越明显，先收窄到进程或函数，采完就关。</li>
+<li><strong>启动慢就去掉资源限额</strong>。限额能防单容器拖垮整机，调整时要同步核对运行时自己的上限。</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>合适工具</th>
+<th>限制</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>内核函数调用关系</td>
+<td>ftrace、trace-cmd</td>
+<td>需要 debugfs 挂载点</td>
+</tr>
+<tr>
+<td>热点函数与调用栈</td>
+<td>perf、火焰图</td>
+<td>缺少符号时只有地址</td>
+</tr>
+<tr>
+<td>函数参数与返回值</td>
+<td>perf probe、BCC</td>
+<td>依赖调试信息</td>
+</tr>
+<tr>
+<td>自定义统计维度</td>
+<td>eBPF、SystemTap</td>
+<td>开发成本与兼容性</td>
+</tr>
+<tr>
+<td>容器进程与网络</td>
+<td>sysdig</td>
+<td>与宿主机命名空间相关</td>
+</tr>
+</tbody></table>
+<h2 id="动态追踪速查表"><a href="#动态追踪速查表" class="headerlink" title="动态追踪速查表"></a>动态追踪速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>先看什么</th>
+<th>再追什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>容器启动慢或退出</td>
+<td>inspect 退出码、dmesg</td>
+<td>运行时内存上限、CPU 份额</td>
+</tr>
+<tr>
+<td>内核线程 CPU 高</td>
+<td>ps 中的线程名、top 的 si</td>
+<td>perf 采样与火焰图</td>
+</tr>
+<tr>
+<td>想知道函数调用链</td>
+<td>目标函数是否已定位</td>
+<td>ftrace 的 function_graph</td>
+</tr>
+<tr>
+<td>想知道函数参数</td>
+<td>符号是否存在</td>
+<td>perf probe 加参数探针</td>
+</tr>
+<tr>
+<td>冷启动耗时长</td>
+<td>各阶段耗时</td>
+<td>对最大段做链路跟踪</td>
+</tr>
+</tbody></table>
+<p>本篇锚点那组 P99 800 毫秒、CPU 三成的结果，如果指标层解释不了，就换一个观测角度：容器里看 cgroup 限额与运行时配置是否一致，内核线程高看 perf 采样出的热点函数。两条路都要先拿到证据，再决定改配置还是改代码。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>动态追踪靠探针在系统正常运行时取样，硬件事件、静态探针和动态探针覆盖不同观测点；ftrace 适合看函数调用关系，perf 加火焰图适合找热点，eBPF 与 SystemTap 用于自定义统计，容器场景可用 sysdig。容器问题要先看 cgroup 限额与进程自身配置是否对齐，内核线程问题要用 perf 绕过进程级工具。调试符号、追踪开销和时间维度的缺失，都会影响结论，读结果时一并考虑。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg 的 FlameGraph 项目文档</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/09/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%89%EF%BC%89%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E4%B8%8E%E5%AE%B9%E5%99%A8%E5%9C%BA%E6%99%AF/" title="Linux 性能（十三）动态追踪与容器场景">https://xssdpgy.github.io/2023/09/25/Linux 性能（十三）动态追踪与容器场景/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA/" rel="tag"># 动态追踪</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/" rel="prev" title="Linux 性能（十二）NAT 性能与网络优化思路">
+      <i class="fa fa-chevron-left"></i> Linux 性能（十二）NAT 性能与网络优化思路
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/09/29/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E5%9B%9B%EF%BC%89%E7%9B%91%E6%8E%A7%E4%BD%93%E7%B3%BB%E4%B8%8E%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98/" rel="next" title="Linux 性能（十四）监控体系与综合实战">
+      Linux 性能（十四）监控体系与综合实战 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E7%9A%84%E4%BA%8B%E4%BB%B6%E6%BA%90"><span class="nav-text">动态追踪的事件源</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%AE%B9%E5%99%A8%E5%86%B7%E5%90%AF%E5%8A%A8%E7%9A%84%E7%AD%89%E5%BE%85%E5%88%86%E5%B8%83"><span class="nav-text">容器冷启动的等待分布</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#perf-%E4%B8%8E%E7%81%AB%E7%84%B0%E5%9B%BE%E5%91%BD%E4%BB%A4"><span class="nav-text">perf 与火焰图命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%BF%BD%E8%B8%AA%E5%B7%A5%E5%85%B7%E7%9A%84%E9%80%82%E7%94%A8%E8%BE%B9%E7%95%8C"><span class="nav-text">追踪工具的适用边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">动态追踪速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'ac863a66698646cb657aa94315b1d812',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言同一台服务，用主机网络跑压测能到每秒六千多请求，换成走端口映射的容器，每秒只剩几十个请求，连接建立时间从一百多毫秒涨到一秒以上。两边的应用代码和机器规格都没变，差别在报文经过网关时要改写地址，还得查一张连接跟踪表。这篇先把 NAT 的开销落在哪个环节说清楚，再用丢包点和调用栈还原一次完整的定位，最后按协议层列出可选的优化手段和各自的代价。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（十二）NAT 性能与网络优化思路">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言同一台服务，用主机网络跑压测能到每秒六千多请求，换成走端口映射的容器，每秒只剩几十个请求，连接建立时间从一百多毫秒涨到一秒以上。两边的应用代码和机器规格都没变，差别在报文经过网关时要改写地址，还得查一张连接跟踪表。这篇先把 NAT 的开销落在哪个环节说清楚，再用丢包点和调用栈还原一次完整的定位，最后按协议层列出可选的优化手段和各自的代价。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-SNAT%E4%B8%8EDNAT%E8%BD%AC%E6%8D%A2%E8%BF%87%E7%A8%8B.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-NAT%E5%8E%8B%E6%B5%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-nf_hook_slow%E8%B0%83%E7%94%A8%E6%A0%88.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-%E7%BD%91%E7%BB%9C%E6%8C%87%E6%A0%87%E4%B8%8E%E5%B7%A5%E5%85%B7%E5%AF%B9%E7%85%A7%E8%A1%A8.png">
+<meta property="article:published_time" content="2023-09-13T07:10:00.000Z">
+<meta property="article:modified_time" content="2023-09-13T07:10:00.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="网络">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-SNAT%E4%B8%8EDNAT%E8%BD%AC%E6%8D%A2%E8%BF%87%E7%A8%8B.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（十二）NAT 性能与网络优化思路 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（十二）NAT 性能与网络优化思路
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-09-13 15:10:00" itemprop="dateCreated datePublished" datetime="2023-09-13T15:10:00+08:00">2023-09-13</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.5k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>同一台服务，用主机网络跑压测能到每秒六千多请求，换成走端口映射的容器，每秒只剩几十个请求，连接建立时间从一百多毫秒涨到一秒以上。两边的应用代码和机器规格都没变，差别在报文经过网关时要改写地址，还得查一张连接跟踪表。这篇先把 NAT 的开销落在哪个环节说清楚，再用丢包点和调用栈还原一次完整的定位，最后按协议层列出可选的优化手段和各自的代价。</p>
+<span id="more"></span>
+
+<h2 id="NAT-与连接跟踪"><a href="#NAT-与连接跟踪" class="headerlink" title="NAT 与连接跟踪"></a>NAT 与连接跟踪</h2><p>NAT 改写 IP 包的源地址或目的地址，让多台内网机器共享出口 IP。静态 NAT 做一对一固定映射，动态 NAT 从地址池里挑，日常最常见的是带端口的 NAPT：SNAT 在发包时替换源地址和源端口，DNAT 在收包时替换目的地址和目的端口，两者一起用就形成双向的一对一映射。Linux 上这些规则由 Netfilter 框架执行，<code>iptables</code> 是配置入口；NAT 规则写在 nat 表，SNAT 与 MASQUERADE 挂 POSTROUTING 链，DNAT 挂 PREROUTING 链。转发还得打开 IP 转发选项。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-SNAT%E4%B8%8EDNAT%E8%BD%AC%E6%8D%A2%E8%BF%87%E7%A8%8B.png" alt="SNAT 与 DNAT 在网关两侧的改写位置"></p>
+<p><em>SNAT 与 DNAT 在网关两侧的改写位置</em></p>
+<p>改写地址要依赖连接跟踪模块 conntrack。它用一张哈希表记录每条连接的协议、地址和端口，回包才能找到对应的原始连接。这张表是 NAT 的实现基础，也是性能成本所在：每条新连接要查表和分配跟踪对象，表项满了会直接丢包。哈希表大小由 <code>nf_conntrack_buckets</code> 决定，最大记录数由 <code>nf_conntrack_max</code> 决定，两者的比值决定链表长度；调大上限意味着更多内存，调小则容易在并发高峰撞到天花板。MASQUERADE 是最常见的出口规则，多个内网地址转成同一个公网地址时，源端口可能被重新分配。连接按五元组区分，内网地址不同，端口相同也能共存；出口侧可用的端口数、连接跟踪表和带宽都在同一条链上，其中一项见顶就会拖住整体。</p>
+<h2 id="连接表打满的证据链"><a href="#连接表打满的证据链" class="headerlink" title="连接表打满的证据链"></a>连接表打满的证据链</h2><p>实验用两台机器，一台跑服务，一台用 ab 压测。先用主机网络起服务，并发五千、总请求十万，得到每秒六千五百多请求、平均延迟七百多毫秒的基线。换成做端口映射的容器后，两秒超时的压测只完成五千多个请求；把超时放宽到三十秒，结果变成每秒七十多个请求，平均延迟六十五秒。延迟涨了几十倍，先怀疑内核里有丢包。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-NAT%E5%8E%8B%E6%B5%8B%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="NAT 压测的服务端与客户端两台机器"></p>
+<p><em>NAT 压测的服务端与客户端两台机器</em></p>
+<p>用动态追踪脚本挂在 <code>kfree_skb</code> 上统计丢包位置，输出里一万多个包丢在 <code>nf_hook_slow</code>，只有几百个丢在 <code>tcp_v4_rcv</code>。这个名字指向 Netfilter 的钩子函数，范围缩到 NAT 相关路径。接着用 <code>perf record</code> 抓调用栈，在报告里找 <code>nf_hook_slow</code>，三条主要路径浮出来：连接跟踪的 <code>ipv4_conntrack_in</code>、网桥转发的 <code>br_nf_pre_routing</code>、做 DNAT 的 <code>iptable_nat_ipv4_in</code>。三处开销都落在内核态，方向转向连接跟踪配置。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;压测吞吐骤降&quot;] --&gt; B[&quot;追踪 kfree_skb 找丢包点&quot;]
+    B --&gt; C[&quot;nf_hook_slow 占大头&quot;]
+    C --&gt; D[&quot;perf 展开调用栈&quot;]
+    D --&gt; E[&quot;conntrack、网桥、DNAT&quot;]
+    E --&gt; F[&quot;查 nf_conntrack_max 与内核日志&quot;]
+    F --&gt; G[&quot;调表项上限后复测&quot;]
+</pre>
+
+<p>查 <code>sysctl</code> 发现最大连接跟踪数只有一千，而压测并发是五千；<code>dmesg</code> 里已经出现 <code>nf_conntrack: table full, dropping packet</code>。把上限调到十三万、哈希表保持六万五千多，再用原来两秒超时的参数重跑，吞吐回到每秒六千三百多，接近无 NAT 的基线；建连延迟仍高一倍，这段差额就是连接跟踪的成本。</p>
+<p>调大之前要算内存。表项对象和链表项各有固定大小，上限乘以对象大小加上桶数乘以链表项大小，就是大致占用；一千个表项配六万多桶只有一点几 MB，调到十三万就要按同样公式重算。表里的内容可以用 <code>conntrack -L</code> 看，压测时按状态统计，TIME_WAIT 记录堆到九千多条，绝大多数来自同一客户端 IP，默认超时一百二十秒。连接规模长期很大时，缩短超时能腾出表项，代价是对端迟到的报文可能被丢弃或归到新连接上。</p>
+<h2 id="conntrack-与-perf-命令"><a href="#conntrack-与-perf-命令" class="headerlink" title="conntrack 与 perf 命令"></a>conntrack 与 perf 命令</h2><p>先看配置与内核日志，再抓丢包位置和调用栈，最后核对表内状态分布。四步分别回答「上限多少」「丢在哪里」「谁在耗时」「表里装了什么」。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ sysctl -a | grep conntrack</span><br><span class="line">$ dmesg | <span class="built_in">tail</span></span><br><span class="line">$ perf record -a -g -- <span class="built_in">sleep</span> 30</span><br><span class="line">$ perf report -g graph,0</span><br><span class="line">$ sysctl -w net.netfilter.nf_conntrack_max=131072</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">[104235.156774] nf_conntrack: nf_conntrack: table full, dropping packet</span><br><span class="line">[104243.800401] net_ratelimit: 3939 callbacks suppressed</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ conntrack -L -o extended | <span class="built_in">wc</span> -l</span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;/^.*tcp.*$/ &#123;sum[$6]++&#125; END &#123;for(i in sum) print i, sum[i]&#125;&#x27;</span></span><br><span class="line">$ conntrack -L -o extended | awk <span class="string">&#x27;&#123;print $7&#125;&#x27;</span> | <span class="built_in">cut</span> -d <span class="string">&quot;=&quot;</span> -f 2 | <span class="built_in">sort</span> | <span class="built_in">uniq</span> -c | <span class="built_in">sort</span> -nr | <span class="built_in">head</span> -n 10</span><br></pre></td></tr></table></figure>
+
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-nf_hook_slow%E8%B0%83%E7%94%A8%E6%A0%88.png" alt="perf 报告中 nf_hook_slow 的三条调用路径"></p>
+<p><em>perf 报告中 nf_hook_slow 的三条调用路径</em></p>
+<h2 id="参数调整的常见顺序"><a href="#参数调整的常见顺序" class="headerlink" title="参数调整的常见顺序"></a>参数调整的常见顺序</h2><p>定位到瓶颈之前，调参数容易变成逐项试错。几种常见的走偏：</p>
+<ol>
+<li><strong>吞吐掉了就加套接字缓冲</strong>。缓冲区能吸收突发，也会拉长排队时间；连接表打满时，加缓冲只会让等待更久。</li>
+<li><strong>看到 <code>table full</code> 就把上限拉到极大</strong>。表项占内存，链表过长会拖慢查找；先估算内存和并发峰值，再定上限与桶数的比例。</li>
+<li><strong>把无状态映射也跑成有状态 NAT</strong>。固定 IP 和端口的映射场景，可以用 <code>tc</code> 或基于用户态的方案绕过 conntrack，省掉每次查表的开销。</li>
+<li><strong>TCP 选项叠着开</strong>。Nagle 配延迟确认会互相等；NAT 服务器上的端口回收类选项容易引发连接失败，改之前先确认场景。</li>
+<li><strong>忽略叠加网络的 MTU</strong>。VXLAN 在原始报文外多包一层，包长变大后触发分片，吞吐会掉；链路设备与虚拟网卡的 MTU 要一起调。</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>先确认什么</th>
+<th>不宜直接做什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>压测吞吐骤降</td>
+<td>丢包点、连接跟踪上限</td>
+<td>无差别调大缓冲区</td>
+</tr>
+<tr>
+<td>conntrack 表满</td>
+<td>并发峰值、桶数、内存预算</td>
+<td>把上限设成极大值</td>
+</tr>
+<tr>
+<td>建连延迟偏高</td>
+<td>表项状态分布、超时设置</td>
+<td>反复重启服务</td>
+</tr>
+<tr>
+<td>小包吞吐低</td>
+<td>网卡队列、软中断分布</td>
+<td>只盯带宽读数</td>
+</tr>
+<tr>
+<td>叠加网络延迟高</td>
+<td>封装后的 MTU 与分片</td>
+<td>只改应用发送缓冲</td>
+</tr>
+</tbody></table>
+<h2 id="网络优化层次速查表"><a href="#网络优化层次速查表" class="headerlink" title="网络优化层次速查表"></a>网络优化层次速查表</h2><p>优化目标随场景变化：网关看 PPS，缓存和数据库看延迟，Web 服务两头兼顾。目标定下来，再按协议栈从下到上取基准、找瓶颈、改配置。</p>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>主要手段</th>
+<th>代价或适用条件</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>应用</td>
+<td>epoll、多进程或多线程模型、长连接、压缩负载、缓存与 DNS 缓存</td>
+<td>长连接要管空闲回收</td>
+</tr>
+<tr>
+<td>套接字</td>
+<td>收发缓冲按带宽乘延迟估算；TCP_NODELAY、TCP_CORK 按场景选</td>
+<td>缓冲越大排队越久</td>
+</tr>
+<tr>
+<td>传输层</td>
+<td>TIME_WAIT、SYN、Keepalive 相关参数；UDP 按 MTU 定包长</td>
+<td>参数之间可能互相冲突</td>
+</tr>
+<tr>
+<td>网络层</td>
+<td>打开转发、反向校验、调整 MTU、限制 ICMP</td>
+<td>叠加网络要同步改两端</td>
+</tr>
+<tr>
+<td>链路层</td>
+<td>中断亲和性、RPS&#x2F;RFS、多队列、TSO&#x2F;GSO&#x2F;GRO&#x2F;RSS、QoS</td>
+<td>转发场景慎用合并卸载</td>
+</tr>
+<tr>
+<td>极限场景</td>
+<td>DPDK 用户态轮询、XDP 协议栈前处理</td>
+<td>开发和维护成本高</td>
+</tr>
+</tbody></table>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-12-%E7%BD%91%E7%BB%9C%E6%8C%87%E6%A0%87%E4%B8%8E%E5%B7%A5%E5%85%B7%E5%AF%B9%E7%85%A7%E8%A1%A8.png" alt="网络性能指标与观测工具对照表"></p>
+<p><em>网络性能指标与观测工具对照表</em></p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>NAT 的开销来自两处：Netfilter 钩子改地址，conntrack 维护连接状态。压测吞吐骤降时，沿丢包点、调用栈、内核日志、表内状态这条链往下查，比逐项调参数更有效；表项上限要按并发和内存一起算，调完用同一组压测参数复测。再往上的优化按协议层展开：应用改 I&#x2F;O 与工作模型，套接字按带宽乘延迟定缓冲，传输层和网络层调连接与分片参数，链路层分摊中断并合理卸载。这些方法用尽仍不够，才考虑 DPDK 或 XDP 绕过协议栈。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Linux 内核文档：nf_conntrack 与 Netfilter</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/" title="Linux 性能（十二）NAT 性能与网络优化思路">https://xssdpgy.github.io/2023/09/13/Linux 性能（十二）NAT 性能与网络优化思路/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E7%BD%91%E7%BB%9C/" rel="tag"># 网络</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/" rel="prev" title="Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS">
+      <i class="fa fa-chevron-left"></i> Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/09/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%89%EF%BC%89%E5%8A%A8%E6%80%81%E8%BF%BD%E8%B8%AA%E4%B8%8E%E5%AE%B9%E5%99%A8%E5%9C%BA%E6%99%AF/" rel="next" title="Linux 性能（十三）动态追踪与容器场景">
+      Linux 性能（十三）动态追踪与容器场景 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#NAT-%E4%B8%8E%E8%BF%9E%E6%8E%A5%E8%B7%9F%E8%B8%AA"><span class="nav-text">NAT 与连接跟踪</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%BF%9E%E6%8E%A5%E8%A1%A8%E6%89%93%E6%BB%A1%E7%9A%84%E8%AF%81%E6%8D%AE%E9%93%BE"><span class="nav-text">连接表打满的证据链</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#conntrack-%E4%B8%8E-perf-%E5%91%BD%E4%BB%A4"><span class="nav-text">conntrack 与 perf 命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%82%E6%95%B0%E8%B0%83%E6%95%B4%E7%9A%84%E5%B8%B8%E8%A7%81%E9%A1%BA%E5%BA%8F"><span class="nav-text">参数调整的常见顺序</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E5%B1%82%E6%AC%A1%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">网络优化层次速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'c0e82533e131ea4b1843f7ca5cdded33',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言压测加到 3000 QPS，CPU 使用率停在 30%，P99 却是 800 毫秒。还有一类更极端的情况：top 里每个 CPU 都不高，si 那一列却很扎眼，进程列表翻遍了也找不到吃 CPU 的应用。这多半和收包有关——数据从网卡进来，协议栈逐层解析这项工作记在软中断名下，看着像系统忙，其实是包来得太碎。这篇用一个 Nginx 收小包的例子，把从 si 升高走到具体来源的路径过一遍。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（四）软中断与中断升高的排查">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/02/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%9B%9B%EF%BC%89%E8%BD%AF%E4%B8%AD%E6%96%AD%E4%B8%8E%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言压测加到 3000 QPS，CPU 使用率停在 30%，P99 却是 800 毫秒。还有一类更极端的情况：top 里每个 CPU 都不高，si 那一列却很扎眼，进程列表翻遍了也找不到吃 CPU 的应用。这多半和收包有关——数据从网卡进来，协议栈逐层解析这项工作记在软中断名下，看着像系统忙，其实是包来得太碎。这篇用一个 Nginx 收小包的例子，把从 si 升高走到具体来源的路径过一遍。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-04-Nginx%E4%B8%8Ehping3%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png">
+<meta property="article:published_time" content="2023-08-02T12:37:36.000Z">
+<meta property="article:modified_time" content="2023-08-02T12:37:36.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="CPU">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-04-Nginx%E4%B8%8Ehping3%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/02/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%9B%9B%EF%BC%89%E8%BD%AF%E4%B8%AD%E6%96%AD%E4%B8%8E%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（四）软中断与中断升高的排查 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/02/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%9B%9B%EF%BC%89%E8%BD%AF%E4%B8%AD%E6%96%AD%E4%B8%8E%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（四）软中断与中断升高的排查
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-02 20:37:36" itemprop="dateCreated datePublished" datetime="2023-08-02T20:37:36+08:00">2023-08-02</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.7k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>压测加到 3000 QPS，CPU 使用率停在 30%，P99 却是 800 毫秒。还有一类更极端的情况：top 里每个 CPU 都不高，si 那一列却很扎眼，进程列表翻遍了也找不到吃 CPU 的应用。这多半和收包有关——数据从网卡进来，协议栈逐层解析这项工作记在软中断名下，看着像系统忙，其实是包来得太碎。这篇用一个 Nginx 收小包的例子，把从 si 升高走到具体来源的路径过一遍。</p>
+<span id="more"></span>
+
+<h2 id="硬中断与软中断"><a href="#硬中断与软中断" class="headerlink" title="硬中断与软中断"></a>硬中断与软中断</h2><p>中断是系统响应硬件请求的方式，硬件有事就打断当前进程，转去执行中断处理程序。它要解决一对矛盾：处理程序要快，因为运行期间会临时关中断，拖太久，后来的中断就丢了；可有些活本身就不轻，比如网络包收进来之后要逐层解析。</p>
+<p>Linux 的办法是拆成两段。上半部对应硬中断，在关中断模式下跑，只做最要紧的事：把网卡里的数据读进内存、更新硬件寄存器状态，然后发一个软中断信号就退出，整个过程很短。下半部对应软中断，接着做上半部没做完的解析工作，以内核线程的方式运行，每个 CPU 都对应一个，名字是 ksoftirqd 加 CPU 编号。这样网卡处理事情时，别的中断还能进来。</p>
+<pre class="mermaid">
+flowchart LR
+    A[&quot;网卡收到数据包&quot;] --&gt; B[&quot;硬中断 上半部&quot;]
+    B --&gt; B1[&quot;数据读到内存&quot;]
+    B --&gt; B2[&quot;更新硬件寄存器&quot;]
+    B --&gt; B3[&quot;触发软中断&quot;]
+    B3 --&gt; C[&quot;软中断 下半部 ksoftirqd&quot;]
+    C --&gt; C1[&quot;按协议栈逐层解析&quot;]
+    C1 --&gt; C2[&quot;送到应用程序&quot;]
+</pre>
+
+<p>软中断不只是网络收发的下半部，内核调度、定时器、RCU 锁这些自定义事件也算。它的执行有两个时机：硬中断返回前顺带处理一批，遗留的交给 ksoftirqd 线程接着跑。所以软中断占的 CPU 记在系统态的 si 列，落到进程头上是内核线程，不是业务进程——这就是为什么 si 很高时，进程列表里翻不到一个吃 CPU 的应用。</p>
+<p>看系统里有哪些软中断，用 <code>/proc/softirqs</code>；想看硬中断，用 <code>/proc/interrupts</code>。软中断线程可以在进程列表里找到，名字带中括号的通常是内核线程，拿不到命令行参数。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ ps aux | grep softirq</span><br><span class="line">root       7  0.0  0.0      0     0 ?  S   Oct10  0:01 [ksoftirqd/0]</span><br><span class="line">root      16  0.0  0.0      0     0 ?  S   Oct10  0:01 [ksoftirqd/1]</span><br></pre></td></tr></table></figure>
+
+<h2 id="NET-RX-升高的排查链"><a href="#NET-RX-升高的排查链" class="headerlink" title="NET_RX 升高的排查链"></a>NET_RX 升高的排查链</h2><p>实验用两台虚拟机，一台跑 Nginx 当服务端，另一台发压，彼此隔开避免互相干扰。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ docker run -itd --name=nginx -p 80:80 nginx</span><br><span class="line">$ curl http://192.168.0.30/</span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br></pre></td></tr></table></figure>
+
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-04-Nginx%E4%B8%8Ehping3%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="Nginx 与 hping3 两台虚拟机的实验拓扑"></p>
+<p><em>Nginx 与 hping3 两台虚拟机的实验拓扑</em></p>
+<p>客户端用 hping3 以每隔 100 微秒一个包的节奏往 80 端口发 SYN，压测开始。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hping3 -S -p 80 -i u100 192.168.0.30</span><br></pre></td></tr></table></figure>
+
+<p>回到服务端，这时连敲几个回车都要等很久。先看整体资源。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ top</span><br><span class="line">top - 10:50:58 up 1 days, 1 user, load average: 0.00, 0.00, 0.00</span><br><span class="line">Tasks: 122 total, 1 running, 71 sleeping, 0 stopped, 0 zombie</span><br><span class="line">%Cpu0 : 0.0 us, 0.0 sy, 0.0 ni, 96.7 <span class="built_in">id</span>, 0.0 wa, 0.0 hi, 3.3 si, 0.0 st</span><br><span class="line">%Cpu1 : 0.0 us, 0.0 sy, 0.0 ni, 95.6 <span class="built_in">id</span>, 0.0 wa, 0.0 hi, 4.4 si, 0.0 st</span><br></pre></td></tr></table></figure>
+
+<p>load 全是 0，就绪队列只有一个进程，CPU 使用率最高的也没超过 5%，进程列表里居首的是 ksoftirqd。既然 CPU 时间主要花在 si 上，下一步要弄清是哪一类软中断。<code>/proc/softirqs</code> 给的是开机以来的累计次数，单次读数看不出快慢，得看它涨的速度——用 <code>watch -d</code> 把变化的部分高亮出来。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ watch -d <span class="built_in">cat</span> /proc/softirqs</span><br></pre></td></tr></table></figure>
+
+<p>高亮里 TIMER、NET_RX、SCHED、RCU 都在涨，其中 NET_RX 涨得最快。定时、调度、RCU 这些是内核正常运转的底噪，网络接收这一项冒尖，方向就落到收包上。顺着这条线查网卡收发。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ sar -n DEV 1</span><br><span class="line">15:03:47 IFACE    rxpck/s  txpck/s  rxkB/s  txkB/s  %ifutil</span><br><span class="line">15:03:48 eth0    12607.00  6304.00  664.86  358.11    0.01</span><br><span class="line">15:03:48 docker0  6302.00 12604.00  270.79  664.66    0.00</span><br></pre></td></tr></table></figure>
+
+<p>eth0 每秒收 12607 个包，收进来的数据量只有 664 KB，算下来平均每包 54 字节——满屏都是小包。包小之所以费 CPU，是因为每收一个包都要从头走一遍协议栈：校验、查路由、送到 socket，这些固定步骤按包收，不按字节收。同样 664 KB 的数据，装成几百字节的大包可能只要一千多次，拆成 54 字节的小包就得上万次，每次都要占一段软中断时间。包越碎，同样的流量吃掉的 CPU 越多。抓包看这些小包是什么、从哪来。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">$ tcpdump -i eth0 -n tcp port 80</span><br><span class="line">15:11:32.678966 IP 192.168.0.2.18238 &gt; 192.168.0.30.80: Flags [S], <span class="built_in">seq</span> 458303614, win 512, length 0</span><br></pre></td></tr></table></figure>
+
+<p>Flags [S] 是 SYN，源地址集中在一个 IP，配合两万上下的 PPS， SYN FLOOD 就对上了。整条链从 si 高出发，靠变化速率锁定 NET_RX，再用 PPS 和包长判断形态，最后抓包确认来源。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;终端响应变慢&quot;] --&gt; B[&quot;top: si 高, 无吃 CPU 的进程&quot;]
+    B --&gt; C[&quot;watch -d &#x2F;proc&#x2F;softirqs&quot;]
+    C --&gt; D{&quot;哪类软中断涨最快&quot;}
+    D --&gt;|&quot;NET_RX&quot;| E[&quot;sar -n DEV 看 PPS 与 BPS&quot;]
+    E --&gt; F{&quot;平均包长很小&quot;}
+    F --&gt;|&quot;54 字节&quot;| G[&quot;tcpdump 抓包&quot;]
+    G --&gt; H[&quot;Flags S 为 SYN&quot;]
+    H --&gt; I[&quot;确认 SYN FLOOD, 从源头封 IP&quot;]
+</pre>
+
+<h2 id="softirqs、sar-与-tcpdump"><a href="#softirqs、sar-与-tcpdump" class="headerlink" title="softirqs、sar 与 tcpdump"></a>softirqs、sar 与 tcpdump</h2><p>这三个工具各管一段，分开看清楚界限，排查时才不会用错。</p>
+<p><code>/proc/softirqs</code> 回答「哪一类」。第一列是软中断类型，<code>NET_RX</code> 是网络接收、<code>NET_TX</code> 是发送，<code>TIMER</code>、<code>SCHED</code>、<code>RCU</code> 分别对应定时、调度和锁。后面每列是一个 CPU 上的累计次数，同一类型在各 CPU 上应该是一个量级。TASKLET 是例外，它只在调用它的那个 CPU 上运行，分布不均是它的机制使然，不必当成异常。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">              CPU0       CPU1</span><br><span class="line">HI:              0          0</span><br><span class="line">TIMER:       811613    1972736</span><br><span class="line">NET_TX:          49          7</span><br><span class="line">NET_RX:     1136736    1506885</span><br><span class="line">BLOCK:            0          0</span><br><span class="line">TASKLET:     304787       3691</span><br><span class="line">SCHED:       689718    1897539</span><br><span class="line">RCU:        1330771    1354737</span><br></pre></td></tr></table></figure>
+
+<p><code>sar -n DEV</code> 回答「收了多少、包多大」。<code>rxpck/s</code> 和 <code>txpck/s</code> 是每秒收发的网络帧数，也就是 PPS；<code>rxkB/s</code> 和 <code>txkB/s</code> 是每秒收发的字节数，也就是 BPS。两个一除就是平均包长，这个小包判断就是这么来的。网桥转发的 docker0、veth 网卡数据和 eth0 对称，那是包转给容器的路径，不用当独立问题看。</p>
+<p><code>tcpdump</code> 回答「包是什么、谁发的」。<code>-i</code> 指定网卡，<code>-n</code> 不解析主机名，<code>tcp port 80</code> 把范围收窄到目标端口。<code>Flags [S]</code> 是 SYN，<code>Flags [S.]</code> 是 SYN 加 ACK，看到清一色的 SYN 又没有后续握手，就要往连接耗尽的方向想。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">IP 192.168.0.2.18238 &gt; 192.168.0.30.80: Flags [S], seq 458303614, win 512, length 0</span><br><span class="line">IP 192.168.0.2.18239 &gt; 192.168.0.30.80: Flags [S], seq 458303615, win 512, length 0</span><br></pre></td></tr></table></figure>
+
+<h2 id="软中断升高的误判"><a href="#软中断升高的误判" class="headerlink" title="软中断升高的误判"></a>软中断升高的误判</h2><p>软中断高只说明 CPU 时间在内核的异步处理上，具体是什么把软中断顶上去的，还得往下查。几种常见的走偏：</p>
+<ol>
+<li><strong>看到 si 高就去加 CPU</strong>。软中断占用的是收包和解析的时间，算力加一倍，包还在照样收，缓解有限。</li>
+<li><strong>拿 <code>/proc/softirqs</code> 的单次读数当结论</strong>。那是开机累计值，跑得久的机器上每个类型都很大，不看变化率分不出谁是当下的热点。</li>
+<li><strong>看见 NET_RX 高就直接改网卡参数</strong>。队列、缓冲区怎么调，取决于收的是正常小包流量还是攻击流量，来源没确认就动手，改完很难说清有没有用。</li>
+<li><strong>只看一个 CPU 的 si</strong>。软中断是按核分的，TASKLET 又只在单核跑，平均下来不高、单核被打满的情况并不少见，要看每个核。</li>
+<li><strong>把 SYN FLOOD 当普通流量调优</strong>。拥塞控制和超时调参解决不了伪造源地址的半连接洪泛，这种得在交换机或防火墙上按来源拦截。</li>
+</ol>
+<p>也有不适用的时候：si 在整体 CPU 里占比很小、软中断类型里没有哪一项明显冒尖，这时软中断不是主线，回到 CPU 使用率或 I&#x2F;O 等待那条路重查。反过来，NET_RX 冒尖但包长正常、来源分散，多半是真实流量涨了，该看的是容量而不是攻击。</p>
+<h2 id="软中断类型速查表"><a href="#软中断类型速查表" class="headerlink" title="软中断类型速查表"></a>软中断类型速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>含义</th>
+<th>下一步</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>si 高、进程无热点</td>
+<td>top 里 si 占大头</td>
+<td>CPU 时间在软中断</td>
+<td>查 <code>/proc/softirqs</code> 变化率</td>
+</tr>
+<tr>
+<td>NET_RX 涨最快</td>
+<td>watch 高亮集中在 NET_RX</td>
+<td>网络收包是热点</td>
+<td><code>sar -n DEV</code> 看 PPS 与包长</td>
+</tr>
+<tr>
+<td>PPS 高、包长小</td>
+<td>每秒上万帧、每包几十字节</td>
+<td>小包洪泛</td>
+<td><code>tcpdump</code> 抓包看来源与标志位</td>
+</tr>
+<tr>
+<td>Flags [S] 成片</td>
+<td>源地址集中、无后续握手</td>
+<td>SYN FLOOD</td>
+<td>从交换机或防火墙封来源</td>
+</tr>
+<tr>
+<td>NET_TX 涨得快</td>
+<td>发送方向的 PPS 冒尖</td>
+<td>发包是热点</td>
+<td>查对端接收与本机发送队列</td>
+</tr>
+<tr>
+<td>TASKLET 分布不均</td>
+<td>单核 TASKLET 明显偏高</td>
+<td>仅在调用它的 CPU 运行</td>
+<td>机制使然，先不当异常</td>
+</tr>
+</tbody></table>
+<p>本篇开头那组数落在第一行：CPU 30% 配高延迟、进程列表又没有热点，si 值得查。真查下去，是 NET_RX 在涨、包又碎，才一步步走到小包和 SYN FLOOD——顺序反过来，一上来就调内核参数，多半调不到点子上。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>中断分上半部和下半部：上半部是硬中断，关中断模式下快速处理硬件请求；下半部是软中断，由 ksoftirqd 内核线程接着做解析这类耗时工作。软中断 CPU 使用率升高，生产里最常见的是网络接收型，排查按「si 高 → <code>/proc/softirqs</code> 看变化率定类型 → <code>sar -n DEV</code> 看 PPS 和包长 → <code>tcpdump</code> 抓包定来源」这条链走。<code>/proc/softirqs</code> 是累计值，得看变化率；软中断按核分配，别只看一个 CPU；定位到 SYN FLOOD 后，处置要从源头拦截，调本机参数解决不了。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/02/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%9B%9B%EF%BC%89%E8%BD%AF%E4%B8%AD%E6%96%AD%E4%B8%8E%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5/" title="Linux 性能（四）软中断与中断升高的排查">https://xssdpgy.github.io/2023/08/02/Linux 性能（四）软中断与中断升高的排查/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/CPU/" rel="tag"># CPU</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/07/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%89%EF%BC%89%E4%B8%8A%E4%B8%8B%E6%96%87%E5%88%87%E6%8D%A2%E4%B8%8E%E8%BF%9B%E7%A8%8B%E7%8A%B6%E6%80%81/" rel="prev" title="Linux 性能（三）上下文切换与进程状态">
+      <i class="fa fa-chevron-left"></i> Linux 性能（三）上下文切换与进程状态
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/08/08/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%94%EF%BC%89CPU%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96%E6%89%8B%E6%AE%B5%E7%9A%84%E4%BB%A3%E4%BB%B7/" rel="next" title="Linux 性能（五）CPU 瓶颈定位与优化手段的代价">
+      Linux 性能（五）CPU 瓶颈定位与优化手段的代价 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A1%AC%E4%B8%AD%E6%96%AD%E4%B8%8E%E8%BD%AF%E4%B8%AD%E6%96%AD"><span class="nav-text">硬中断与软中断</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#NET-RX-%E5%8D%87%E9%AB%98%E7%9A%84%E6%8E%92%E6%9F%A5%E9%93%BE"><span class="nav-text">NET_RX 升高的排查链</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#softirqs%E3%80%81sar-%E4%B8%8E-tcpdump"><span class="nav-text">softirqs、sar 与 tcpdump</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%BD%AF%E4%B8%AD%E6%96%AD%E5%8D%87%E9%AB%98%E7%9A%84%E8%AF%AF%E5%88%A4"><span class="nav-text">软中断升高的误判</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%BD%AF%E4%B8%AD%E6%96%AD%E7%B1%BB%E5%9E%8B%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">软中断类型速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '03c600794e72d41d1182913d93770476',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

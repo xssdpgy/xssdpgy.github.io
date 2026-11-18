@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言压测报告上 load average 写 4.2，CPU 使用率写 30%，机器到底忙不忙？两个数各记一件事：负载数的是排队的进程，使用率算的是算力花掉多少。分开看谁也说不清，合起来才知道 4 核机器上队列接近满载、算力却没耗完，等待发生在别处。这篇拆开两个指标的口径，再用一组压测数据说明怎么一起读。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（二）平均负载与 CPU 使用率的判读">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/07/21/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%8C%EF%BC%89%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD%E4%B8%8E%20CPU%20%E4%BD%BF%E7%94%A8%E7%8E%87%E7%9A%84%E5%88%A4%E8%AF%BB/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言压测报告上 load average 写 4.2，CPU 使用率写 30%，机器到底忙不忙？两个数各记一件事：负载数的是排队的进程，使用率算的是算力花掉多少。分开看谁也说不清，合起来才知道 4 核机器上队列接近满载、算力却没耗完，等待发生在别处。这篇拆开两个指标的口径，再用一组压测数据说明怎么一起读。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-CPU%E4%BD%BF%E7%94%A8%E7%8E%87%E4%B8%A4%E6%AC%A1%E5%BF%AB%E7%85%A7%E5%85%AC%E5%BC%8F.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-%E7%9F%AD%E6%97%B6%E8%BF%9B%E7%A8%8Bperf%E9%87%87%E6%A0%B7%E6%8A%A5%E5%91%8A.png">
+<meta property="article:published_time" content="2023-07-21T13:02:52.000Z">
+<meta property="article:modified_time" content="2023-07-21T13:02:52.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="CPU">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-CPU%E4%BD%BF%E7%94%A8%E7%8E%87%E4%B8%A4%E6%AC%A1%E5%BF%AB%E7%85%A7%E5%85%AC%E5%BC%8F.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/07/21/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%8C%EF%BC%89%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD%E4%B8%8E%20CPU%20%E4%BD%BF%E7%94%A8%E7%8E%87%E7%9A%84%E5%88%A4%E8%AF%BB/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（二）平均负载与 CPU 使用率的判读 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/07/21/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%8C%EF%BC%89%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD%E4%B8%8E%20CPU%20%E4%BD%BF%E7%94%A8%E7%8E%87%E7%9A%84%E5%88%A4%E8%AF%BB/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（二）平均负载与 CPU 使用率的判读
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-07-21 21:02:52" itemprop="dateCreated datePublished" datetime="2023-07-21T21:02:52+08:00">2023-07-21</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.1k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>压测报告上 load average 写 4.2，CPU 使用率写 30%，机器到底忙不忙？两个数各记一件事：负载数的是排队的进程，使用率算的是算力花掉多少。分开看谁也说不清，合起来才知道 4 核机器上队列接近满载、算力却没耗完，等待发生在别处。这篇拆开两个指标的口径，再用一组压测数据说明怎么一起读。</p>
+<span id="more"></span>
+
+<h2 id="平均负载"><a href="#平均负载" class="headerlink" title="平均负载"></a>平均负载</h2><p>uptime 最后三个数是过去 1、5、15 分钟的平均负载。它数的是单位时间内处于可运行 R 和不可中断 D 两种状态的进程数，跟 CPU 忙了多久是两套账。</p>
+<blockquote>
+<p>平均负载是指单位时间内，系统处于可运行状态和不可中断状态的平均进程数，也就是平均活跃进程数，它和 CPU 使用率并没有直接关系。</p>
+</blockquote>
+<p>R 状态是正在用 CPU 或正等着被调度的进程，ps 里标 R。D 状态卡在内核关键流程里，不能被打断，最常见的是等磁盘或网络 I&#x2F;O 返回。进程发出读写后要等数据落盘，这中间被打断，磁盘上的数据和进程里的数据就对不上，所以 D 状态也算一层保护。负载把这两种都算进去，等 I&#x2F;O 的进程即使一点 CPU 不吃，也会把负载顶上去。</p>
+<table>
+<thead>
+<tr>
+<th>进程状态</th>
+<th>ps 标记</th>
+<th>计不计入负载</th>
+<th>通常在等什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>可运行</td>
+<td>R</td>
+<td>计入</td>
+<td>正在跑，或在就绪队列等 CPU</td>
+</tr>
+<tr>
+<td>不可中断</td>
+<td>D</td>
+<td>计入</td>
+<td>磁盘、网络等硬件 I&#x2F;O 返回</td>
+</tr>
+<tr>
+<td>可中断睡眠</td>
+<td>S</td>
+<td>不计入</td>
+<td>等事件、等定时器、等 socket</td>
+</tr>
+<tr>
+<td>僵尸</td>
+<td>Z</td>
+<td>不计入</td>
+<td>已退出，等父进程回收</td>
+</tr>
+</tbody></table>
+<p>三个数字是不同时间窗的指数衰减平均，当平均值理解就行，不必纠缠算法。判断负载高不高，先拿核数做尺子：</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">grep <span class="string">&#x27;model name&#x27;</span> /proc/cpuinfo | <span class="built_in">wc</span> -l</span><br><span class="line"><span class="comment"># 4</span></span><br></pre></td></tr></table></figure>
+
+<p>最理想是负载贴着核数走，每个核刚好跑一个进程。4 核机器上负载 4.2，意思是队列里的活跃进程比核数略多，多出来的那部分得排队。经验上超过核数的 70% 就值得盯一眼，但这个阈值不是硬线——单看一个数字判断不了，得看它相对自己历史曲线的变化。</p>
+<h2 id="负载-4-2-的判读"><a href="#负载-4-2-的判读" class="headerlink" title="负载 4.2 的判读"></a>负载 4.2 的判读</h2><p>负载 4.2 只说了「有 4.2 个活跃进程」，没说它们在等什么。同样这个数，成因不同，下一步查的东西完全不一样。</p>
+<p>四种常见成因里，最直观的是算力被打满：4 个进程各占一个核，负载和 CPU 使用率一起涨，这种最好查。麻烦的是另外几种。等 I&#x2F;O 的进程停在 D 状态，负载照涨，CPU 使用率却上不去；再有就是一堆进程抢 4 个核，每个都只分到一点，负载高、使用率也高，但单个进程看起来都不忙。还有一类藏得更深：进程短命，top 刷新一次它就退出了，系统 CPU 明明很高，进程列表里却翻不到。</p>
+<p>本篇的锚点数据属于哪种？load 4.2、CPU 30%，算力显然没打满。把三个时间窗摊开看：</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">uptime</span></span><br><span class="line"> 23:12:07 up 12 days,  4:31,  1 user,  load average: 4.20, 3.86, 2.11</span><br></pre></td></tr></table></figure>
+
+<p>1 分钟 4.20 高于 15 分钟的 2.11，负载还在往上走，不是一次瞬时抖动。这时候的 4.2 更像「排队在累积」，得往下追是哪一层在堵。</p>
+<pre class="mermaid">
+graph TD
+  L[&quot;load 4.2 &#x2F; 4 核&quot;] --&gt; Q{&quot;CPU 使用率如何?&quot;}
+  Q -- &quot;接近 100%&quot; --&gt; A[&quot;算力打满&lt;br&#x2F;&gt;看每核与热点函数&quot;]
+  Q -- &quot;只有 30%&quot; --&gt; R{&quot;进程状态分布?&quot;}
+  R -- &quot;D 状态多&quot; --&gt; B[&quot;等 I&#x2F;O&lt;br&#x2F;&gt;iostat &#x2F; 块设备等待&quot;]
+  R -- &quot;R 状态多但单个不高&quot; --&gt; C[&quot;抢 CPU&lt;br&#x2F;&gt;pidstat 的 %wait&quot;]
+  R -- &quot;列表里看不到&quot; --&gt; D[&quot;短时进程&lt;br&#x2F;&gt;pstree &#x2F; execsnoop&quot;]
+</pre>
+
+<p>图里每个分支都对应一类能观测的数，先确认落在哪支，再谈优化。拿「4.2 超过 4 核」直接去调内核参数，Skip 了归因这一步，改完也说不清有没有用。</p>
+<h2 id="uptime-与-mpstat-命令"><a href="#uptime-与-mpstat-命令" class="headerlink" title="uptime 与 mpstat 命令"></a>uptime 与 mpstat 命令</h2><p>CPU 使用率来自 &#x2F;proc&#x2F;stat 里的节拍计数。这些数是开机以来的累计值，拿单次读数算出来的是开机至今的平均值，参考价值有限。工具的做法是隔几秒取两次快照做差，得到这段时间的使用率。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-CPU%E4%BD%BF%E7%94%A8%E7%8E%87%E4%B8%A4%E6%AC%A1%E5%BF%AB%E7%85%A7%E5%85%AC%E5%BC%8F.png" alt="CPU 使用率的两次快照差值公式"></p>
+<p><em>CPU 使用率的两次快照差值公式</em></p>
+<blockquote>
+<p>性能分析工具给出的都是间隔一段时间的平均 CPU 使用率，所以要注意间隔时间的设置，特别是用多个工具对比分析时，你一定要保证它们用的是相同的间隔时间。</p>
+</blockquote>
+<p>一轮采样把应用侧和系统侧放在同一个时间窗里，工具之间对齐间隔：</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 负载与核数</span></span><br><span class="line"><span class="built_in">uptime</span></span><br><span class="line">grep <span class="string">&#x27;model name&#x27;</span> /proc/cpuinfo | <span class="built_in">wc</span> -l</span><br><span class="line"><span class="built_in">cat</span> /proc/loadavg</span><br><span class="line"></span><br><span class="line"><span class="comment"># 每核使用率，区分 us / sy / iowait / si</span></span><br><span class="line">mpstat -P ALL 1 3</span><br><span class="line"></span><br><span class="line"><span class="comment"># 按进程拆 CPU 时间，含等待 CPU 的 %wait</span></span><br><span class="line">pidstat -u 1 3</span><br><span class="line"></span><br><span class="line"><span class="comment"># 原始计数</span></span><br><span class="line"><span class="built_in">cat</span> /proc/stat | grep ^cpu</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">uptime</span></span><br><span class="line"> 23:12:07 up 12 days,  4:31,  1 user,  load average: 4.20, 3.86, 2.11</span><br><span class="line"></span><br><span class="line">$ <span class="built_in">cat</span> /proc/loadavg</span><br><span class="line">4.20 3.86 2.11 6/412 28713</span><br><span class="line"><span class="comment">#   前三个是 1/5/15 分钟负载；6/412 是运行队列 6 个、总进程 412 个</span></span><br><span class="line"></span><br><span class="line">$ mpstat -P ALL 1 1</span><br><span class="line">CPU   %usr  %sys  %iowait  %soft  %idle</span><br><span class="line">all  21.30  8.70    18.20   1.80  49.90</span><br><span class="line">  0  84.00 11.00     2.00   2.00   1.00</span><br><span class="line">  1   6.00  3.00    71.00   1.00  19.00</span><br><span class="line">  2  12.00  9.00    12.00   2.00  65.00</span><br><span class="line">  3   3.00  0.00     1.00   0.00  96.00</span><br><span class="line"></span><br><span class="line">$ pidstat -u 1 1</span><br><span class="line">UID   PID   %usr  %system  %<span class="built_in">wait</span>  %CPU  Command</span><br><span class="line">0    2962  84.00    11.00   0.00  95.00 stress</span><br><span class="line">0    3057   0.20     1.00  68.00   1.20 kworker/1:1H</span><br></pre></td></tr></table></figure>
+
+<p>mpstat 的每核输出比 all 那一行有用得多：all 显示 iowait 18%、idle 50%，看着还算宽松；拆到每核，0 号核 us 84% 接近打满，1 号核 iowait 71% 卡在等 I&#x2F;O。两台机器同样的 all 数字，问题可以完全相反。pidstat 的 %wait 补上另一维——进程有多少时间耗在就绪队列等 CPU，这一列高，说明排队已经落到进程头上。</p>
+<p>本篇用到的 <code>/proc</code> 入口：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">/proc</span><br><span class="line">├── cpuinfo                 # 核数与型号</span><br><span class="line">├── loadavg                 # 1/5/15 分钟负载、运行队列</span><br><span class="line">├── stat                    # CPU 各状态累计节拍，两次做差算使用率</span><br><span class="line">├── &lt;PID&gt;/</span><br><span class="line">│   ├── stat                # 进程 CPU 时间、状态、等待</span><br><span class="line">│   └── status              # 进程状态与线程数</span><br><span class="line">└── pressure/</span><br><span class="line">    └── cpu                 # CPU 饱和度</span><br></pre></td></tr></table></figure>
+
+<h2 id="负载的误读"><a href="#负载的误读" class="headerlink" title="负载的误读"></a>负载的误读</h2><ol>
+<li>**把 4.2 读成 CPU 用了 420%**。负载数的是进程个数，百分比是另一套算法，4 核机器上 4.2 只说明队列略超核数。</li>
+<li><strong>只盯 1 分钟值下判断</strong>。1 分钟 4.20、15 分钟 2.11 是在涨，1 分钟 2.11、15 分钟 4.20 是在退；同一个数含义相反。</li>
+<li><strong>系统 CPU 高就挨个查进程</strong>。有进程短命，top 两次刷新之间它已经退出，进程列表翻遍也对不上 80% 的 us。课程案例里系统 us 80%，所有进程加起来才 21%，元凶是 php-fpm 反复 fork 的 stress。</li>
+<li><strong>拿不同间隔的工具输出直接比</strong>。top 默认按几秒刷新，ps 报的是进程整个生命周期，两个工具的 %CPU 对不上很正常，先对齐采样窗口再谈差异。</li>
+<li><strong>看 all 那一行就收工</strong>。每核分布被平均值抹平，一个核跑满、一个核在等 I&#x2F;O，all 行可能看起来波澜不惊。</li>
+</ol>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-02-%E7%9F%AD%E6%97%B6%E8%BF%9B%E7%A8%8Bperf%E9%87%87%E6%A0%B7%E6%8A%A5%E5%91%8A.png" alt="短时 stress 进程的 perf 采样报告"></p>
+<p><em>短时 stress 进程的 perf 采样报告</em></p>
+<p>短时进程这类问题，先用 pstree 看父子关系，确认是谁在反复拉起子进程；再上 execsnoop 盯 exec 调用，它按事件抓，不会像 top 那样漏掉活了几毫秒的进程。perf record 采样能做最后确认——图里 stress 占了 77% 的 CPU 时钟，热点落在随机数生成上，和 top 里「找不到进程」是同一件事的两面。</p>
+<table>
+<thead>
+<tr>
+<th>什么情况不必这么做</th>
+<th>原因</th>
+<th>替代做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>负载长期低于核数一半、P99 稳定</td>
+<td>队列没形成，拆指标的成本收不回</td>
+<td>只保留负载趋势告警</td>
+</tr>
+<tr>
+<td>单核嵌入式或单容器限流到 1 核</td>
+<td>核数尺子失效，负载 1.0 就是满载</td>
+<td>直接看该核使用率与运行队列</td>
+</tr>
+<tr>
+<td>离线批处理，关心总耗时</td>
+<td>进程排队是常态，分位和使用率不对应体验</td>
+<td>记作业时长与失败率</td>
+</tr>
+<tr>
+<td>瓶颈已确认在下游数据库</td>
+<td>本机指标再细也改不动外部依赖</td>
+<td>看调用链耗时占比</td>
+</tr>
+<tr>
+<td>采样间隔短于进程存活时间</td>
+<td>短时进程必漏，统计不可信</td>
+<td>换 execsnoop 这类事件型工具</td>
+</tr>
+</tbody></table>
+<h2 id="负载与使用率四格"><a href="#负载与使用率四格" class="headerlink" title="负载与使用率四格"></a>负载与使用率四格</h2><p>把两个指标摆成四格，先定位再动手：</p>
+<table>
+<thead>
+<tr>
+<th>负载</th>
+<th>CPU 使用率</th>
+<th>读数</th>
+<th>下一步</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>高</td>
+<td>高</td>
+<td>算力吃紧或一堆进程抢核</td>
+<td>mpstat 看每核，pidstat 看 %wait</td>
+</tr>
+<tr>
+<td>高</td>
+<td>低</td>
+<td>进程多半卡在 D 状态等 I&#x2F;O</td>
+<td>看 iowait、块设备 await</td>
+</tr>
+<tr>
+<td>低</td>
+<td>高</td>
+<td>少数核被打满，平均值被摊薄</td>
+<td>mpstat -P ALL 逐核看</td>
+</tr>
+<tr>
+<td>低</td>
+<td>低</td>
+<td>本机没压力，问题可能在别处</td>
+<td>查应用分段耗时与下游</td>
+</tr>
+</tbody></table>
+<p>本篇那组数据落在第二格：负载 4.2、使用率 30%、每核显示 1 号核 iowait 71%。方向随即从「CPU 不够」转成「等什么」。这个转向不需要动任何配置，只靠把两个指标的口径分开、再逐核拆一层。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>平均负载数 R 和 D 状态的进程数，CPU 使用率算算力花掉的比例，两者从来不是同一个数。4 核机器上负载 4.2 配 30% 使用率，说明队列在涨而算力有余量，等待发生在别处；逐核拆开 mpstat、看 pidstat 的 %wait，把「等什么」收窄到几条假设上。遇到系统 CPU 高却找不到进程，别在进程列表里死磕，pstree 和 execsnoop 顺着父子关系追，perf 采样再做确认。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/07/21/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%8C%EF%BC%89%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD%E4%B8%8E%20CPU%20%E4%BD%BF%E7%94%A8%E7%8E%87%E7%9A%84%E5%88%A4%E8%AF%BB/" title="Linux 性能（二）平均负载与 CPU 使用率的判读">https://xssdpgy.github.io/2023/07/21/Linux 性能（二）平均负载与 CPU 使用率的判读/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/CPU/" rel="tag"># CPU</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/07/20/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%80%EF%BC%89%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E4%BD%93%E7%B3%BB%E4%B8%8E%E5%88%86%E6%9E%90%E8%B7%AF%E5%BE%84/" rel="prev" title="Linux 性能（一）性能指标体系与分析路径">
+      <i class="fa fa-chevron-left"></i> Linux 性能（一）性能指标体系与分析路径
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/07/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%89%EF%BC%89%E4%B8%8A%E4%B8%8B%E6%96%87%E5%88%87%E6%8D%A2%E4%B8%8E%E8%BF%9B%E7%A8%8B%E7%8A%B6%E6%80%81/" rel="next" title="Linux 性能（三）上下文切换与进程状态">
+      Linux 性能（三）上下文切换与进程状态 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD"><span class="nav-text">平均负载</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B4%9F%E8%BD%BD-4-2-%E7%9A%84%E5%88%A4%E8%AF%BB"><span class="nav-text">负载 4.2 的判读</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#uptime-%E4%B8%8E-mpstat-%E5%91%BD%E4%BB%A4"><span class="nav-text">uptime 与 mpstat 命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B4%9F%E8%BD%BD%E7%9A%84%E8%AF%AF%E8%AF%BB"><span class="nav-text">负载的误读</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B4%9F%E8%BD%BD%E4%B8%8E%E4%BD%BF%E7%94%A8%E7%8E%87%E5%9B%9B%E6%A0%BC"><span class="nav-text">负载与使用率四格</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'a0671ef12611c58911b7120397562b5e',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

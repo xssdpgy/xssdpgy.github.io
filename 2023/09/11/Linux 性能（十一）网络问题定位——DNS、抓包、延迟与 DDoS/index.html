@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言网络异常常以几种相似的外壳出现：域名解析忽快忽慢、ping 的 RTT 很低但命令跑了十秒、服务突然连不上、单次请求很快而并发一上来延迟翻倍。它们用到的命令看着差不多，根因分别落在 DNS 配置、名称反查、半开连接和 TCP 小包交互上。这篇按现象把证据链接起来：先确定慢在哪一段，再决定抓哪个端口的包，最后才谈改哪个参数。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言网络异常常以几种相似的外壳出现：域名解析忽快忽慢、ping 的 RTT 很低但命令跑了十秒、服务突然连不上、单次请求很快而并发一上来延迟翻倍。它们用到的命令看着差不多，根因分别落在 DNS 配置、名称反查、半开连接和 TCP 小包交互上。这篇按现象把证据链接起来：先确定慢在哪一段，再决定抓哪个端口的包，最后才谈改哪个参数。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DNS%E9%80%92%E5%BD%92%E8%A7%A3%E6%9E%90%E6%B5%81%E7%A8%8B.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-%E5%BB%B6%E8%BF%9F%E7%A1%AE%E8%AE%A4%E6%B5%81%E5%9B%BE.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-PTR%E6%9F%A5%E8%AF%A2%E6%8A%93%E5%8C%85%E7%BB%93%E6%9E%9C.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DoS%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png">
+<meta property="article:published_time" content="2023-09-11T13:04:19.000Z">
+<meta property="article:modified_time" content="2023-09-11T13:04:19.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="网络">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DNS%E9%80%92%E5%BD%92%E8%A7%A3%E6%9E%90%E6%B5%81%E7%A8%8B.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-09-11 21:04:19" itemprop="dateCreated datePublished" datetime="2023-09-11T21:04:19+08:00">2023-09-11</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>网络异常常以几种相似的外壳出现：域名解析忽快忽慢、ping 的 RTT 很低但命令跑了十秒、服务突然连不上、单次请求很快而并发一上来延迟翻倍。它们用到的命令看着差不多，根因分别落在 DNS 配置、名称反查、半开连接和 TCP 小包交互上。这篇按现象把证据链接起来：先确定慢在哪一段，再决定抓哪个端口的包，最后才谈改哪个参数。</p>
+<span id="more"></span>
+
+<h2 id="四类现象的分界"><a href="#四类现象的分界" class="headerlink" title="四类现象的分界"></a>四类现象的分界</h2><p>域名解析是把名字换成 IP。客户端按 <code>/etc/resolv.conf</code> 里配置的地址询问 DNS 服务器，缓存没命中时，服务器从根域开始逐级查 NS 记录，直到权威服务器给出 A 记录。公网延迟、丢包、缓存过期、DNS 服务器负载高，都会让这一步变慢；配置缺失时，查询会直接超时。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DNS%E9%80%92%E5%BD%92%E8%A7%A3%E6%9E%90%E6%B5%81%E7%A8%8B.png" alt="DNS 递归查询与缓存位置"></p>
+<p><em>DNS 递归查询与缓存位置</em></p>
+<p>工具自身变慢是另一类。ping 输出里每个包的 RTT 都在 30 毫秒左右，汇总却显示总耗时 11 秒，多出来的时间花在把 IP 反查成域名（PTR 请求）上。不少网络工具默认做名字解析，抓包时能看到两次 PTR 请求各自等到五秒超时，第二个包才发得出去。</p>
+<p>小包冲击看 PPS 和包长。接收每秒两万多包、每包五十多字节时，带宽占用极低，半开连接表却可能被占满，正常客户端连不上。这类现象的根子在连接状态，链路利用率读数给不出线索。</p>
+<p>请求延迟要分开看单次和并发。hping3 测 SYN 到 SYN+ACK 的往返时间只有七毫秒，wrk 压同一台机器却把平均延迟拉到四十多毫秒。差额来自一次请求内部多个分组的交互：服务端等 ACK，客户端等超时，两边各等一次，四十毫秒就堆出来了。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;网络变慢&quot;] --&gt; B{&quot;哪一层慢&quot;}
+    B --&gt;|&quot;域名到 IP&quot;| C[&quot;resolv.conf、dig +trace、DNS 服务器 RTT&quot;]
+    B --&gt;|&quot;工具总耗时&quot;| D[&quot;tcpdump 看 PTR 有没有响应&quot;]
+    B --&gt;|&quot;连接建不上&quot;| E[&quot;sar 看 PPS、netstat 看 SYN_RECV&quot;]
+    B --&gt;|&quot;并发延迟高&quot;| F[&quot;hping3 对比 wrk、Wireshark 看流图&quot;]
+</pre>
+
+<h2 id="从延迟抖动到抓包"><a href="#从延迟抖动到抓包" class="headerlink" title="从延迟抖动到抓包"></a>从延迟抖动到抓包</h2><p>解析超时的排查从配置开始。容器里 <code>nslookup</code> 报 <code>no servers could be reached</code>，<code>ping</code> DNS 服务器却是通的；加 <code>-debug</code> 后会看到请求发给环回地址的 53 端口，再查 <code>/etc/resolv.conf</code> 发现是空文件，补上 nameserver 就能解析。解析慢但能通时，用 <code>ping</code> 量到 DNS 服务器的 RTT：两百毫秒以上还伴随丢包，换一台几十毫秒的服务器，单次解析从十秒降到几十毫秒。仍有秒级抖动，可以在本机起 DNS 缓存服务，把解析地址指向本地，第一次查询走上游，后续命中缓存。</p>
+<p>ping 慢而 RTT 正常这一类，用 tcpdump 一边抓包一边跑 ping。<code>-nn</code> 关掉抓包工具自身的名称解析，过滤 DNS 端口和目标 IP，输出里 ICMP 请求和响应只隔三十毫秒，中间夹着两条 PTR 请求没有应答，两条各耗五秒。给 ping 加 <code>-n</code> 禁止反查，总耗时回到两秒。</p>
+<p>小包冲击的实验用三台机器：一台跑 Web 服务，一台模拟攻击，一台模拟正常客户端。攻击开始后，正常客户端连接超时；<code>sar -n DEV 1</code> 显示接收 PPS 两万多、吞吐每秒一千多 KB，算下来每包约 54 字节。抓包看到成片的 <code>Flags [S]</code>，<code>netstat</code> 里 <code>SYN_RECV</code> 状态堆到一百多条，源地址集中在同一 IP。按源地址拒绝后，正常请求恢复，延迟从两毫秒涨到一秒多，说明攻击包仍在消耗内核资源。源地址随机时按 IP 拒绝失效，改用限制 SYN 速率、调大半连接队列、减少 SYN+ACK 重试、打开 SYN Cookies。这些手段都只是缓解：报文已经进了服务器，内核协议栈的处理开销还在；带宽被打满的情况要在上游做流量清洗。</p>
+<p>请求延迟的排查靠单请求与并发的对比。hping3 测两个端口都在七毫秒左右，wrk 并发一百时，一个端口平均九毫秒，另一个四十多毫秒。抓 8080 端口的包放进 Wireshark，跟随 TCP 流看时序：第一次请求响应很快，第二次请求里客户端收到第一个分组后隔了四十毫秒才发 ACK。这个数字对应延迟确认的超时时间；再用 strace 看压测工具只设了 <code>TCP_NODELAY</code>，没设快速确认，服务端配置里 <code>tcp_nodelay</code> 又是关的。服务端开着 Nagle 等 ACK，客户端等着延迟确认超时，两边互相等。打开服务端的 <code>tcp_nodelay</code> 后，两个分组连续发出，平均延迟回到九毫秒。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-%E5%BB%B6%E8%BF%9F%E7%A1%AE%E8%AE%A4%E6%B5%81%E5%9B%BE.png" alt="TCP 流图中的 40 毫秒延迟确认"></p>
+<p><em>TCP 流图中的 40 毫秒延迟确认</em></p>
+<h2 id="dig-与-tcpdump-命令"><a href="#dig-与-tcpdump-命令" class="headerlink" title="dig 与 tcpdump 命令"></a>dig 与 tcpdump 命令</h2><p>DNS 这一侧，先看本机配置，再看解析结果和递归路径。<code>-debug</code> 给出查询发给谁，<code>+trace</code> 逐层列出 NS 与最终 A 记录，每一跳后面的耗时能定位是哪一级慢。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">cat</span> /etc/resolv.conf</span><br><span class="line">nameserver 114.114.114.114</span><br><span class="line"></span><br><span class="line">$ nslookup -debug time.geekbang.org</span><br><span class="line">;; Connection to 127.0.0.1<span class="comment">#53(127.0.0.1) failed: connection refused.</span></span><br><span class="line"></span><br><span class="line">$ dig +trace +nodnssec time.geekbang.org</span><br><span class="line">$ time nslookup time.geekbang.org</span><br><span class="line">$ ping -c3 114.114.114.114</span><br></pre></td></tr></table></figure>
+
+<p>抓包这一侧，表达式先按协议和端口收窄，再按地址收窄；<code>-nn</code> 关掉反查，<code>-w</code> 存成 pcap 文件交给图形界面分析。<code>host</code> 表达式可以直接写域名，抓包工具会先解析它。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ tcpdump -nn udp port 53 or host 35.190.27.188</span><br><span class="line">$ tcpdump -nn udp port 53 or host 35.190.27.188 -w ping.pcap</span><br><span class="line">$ tcpdump -nn tcp port 8080 -w nginx.pcap</span><br><span class="line">$ tcpdump -i eth0 -n tcp port 80</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">14:02:31.539995 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br><span class="line">14:02:36.545104 IP 172.16.3.4.60254 &gt; 114.114.114.114.53: PTR? 188.27.190.35.in-addr.arpa.</span><br></pre></td></tr></table></figure>
+
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-PTR%E6%9F%A5%E8%AF%A2%E6%8A%93%E5%8C%85%E7%BB%93%E6%9E%9C.png" alt="Wireshark 中两次 PTR 请求没有响应"></p>
+<p><em>Wireshark 中两次 PTR 请求没有响应</em></p>
+<p>连接与延迟这一侧，<code>sar</code> 看 PPS 和包长，<code>netstat</code> 按状态统计半开连接，<code>strace</code> 看应用给套接字设了哪些选项。三步分别对应链路、连接表和应用程序。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">$ sar -n DEV 1</span><br><span class="line">$ netstat -n -p | grep SYN_REC | <span class="built_in">wc</span> -l</span><br><span class="line">$ iptables -I INPUT -s 192.168.0.2 -p tcp -j REJECT</span><br><span class="line">$ sysctl -w net.ipv4.tcp_syncookies=1</span><br><span class="line">$ strace -f wrk --latency -c 100 -t 2 --<span class="built_in">timeout</span> 2 http://192.168.0.30:8080/</span><br></pre></td></tr></table></figure>
+
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-11-DoS%E5%AE%9E%E9%AA%8C%E6%8B%93%E6%89%91.png" alt="目标机、攻击源与正常客户端三虚拟机拓扑"></p>
+<p><em>目标机、攻击源与正常客户端三虚拟机拓扑</em></p>
+<h2 id="跳过归因就调参数"><a href="#跳过归因就调参数" class="headerlink" title="跳过归因就调参数"></a>跳过归因就调参数</h2><p>解析超时先别判定网络不通：配置缺失时，到 DNS 服务器的 ICMP 完全正常。RTT 低也别急着下判断，工具总耗时里可能藏着反查。几条常见的走偏：</p>
+<ol>
+<li><strong>看到超时就改 DNS 服务器地址</strong>。先确认本机有没有 nameserver、查询实际发往哪里，再比较候选服务器的 RTT 和丢包。</li>
+<li><strong>把解析慢全归给网络</strong>。缓存未命中会触发递归查询，加上本地缓存或预取后，重复请求的耗时能差一个数量级。</li>
+<li><strong>PPS 高就以为是带宽打满</strong>。每包五十多字节时，带宽读数很低，真正被占满的是半开连接表；看 <code>SYN_RECV</code> 数量比看 <code>%ifutil</code> 有效。</li>
+<li><strong>单源拒绝当成长久之计</strong>。攻击源随机化后按 IP 封禁失效，限速、队列容量和 SYN Cookies 要提前配好；流量型攻击仍需上游清洗。</li>
+<li><strong>延迟一高就动 Nagle 或缓冲区</strong>。先用抓包流图确认等待发生在哪一跳，再决定关哪个选项；改完要拿同一组并发参数复测。</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>先确认什么</th>
+<th>证据不足时别做什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>域名解析超时</td>
+<td>resolv.conf 与实际查询目标</td>
+<td>判定链路不通</td>
+</tr>
+<tr>
+<td>RTT 低、命令慢</td>
+<td>PTR 请求有没有应答</td>
+<td>归因为服务端处理慢</td>
+</tr>
+<tr>
+<td>高并发下连接超时</td>
+<td>PPS、包长、SYN_RECV 数量</td>
+<td>只盯着带宽利用率</td>
+</tr>
+<tr>
+<td>并发延迟翻倍</td>
+<td>单请求 RTT 与 TCP 流时序</td>
+<td>直接调大发送缓冲</td>
+</tr>
+<tr>
+<td>攻击源随机</td>
+<td>限速与半连接容量</td>
+<td>逐条按源 IP 封禁</td>
+</tr>
+</tbody></table>
+<h2 id="网络异常速查表"><a href="#网络异常速查表" class="headerlink" title="网络异常速查表"></a>网络异常速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>工具</th>
+<th>处置方向</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>解析失败</td>
+<td>nameserver、debug 输出</td>
+<td><code>cat</code>、<code>nslookup -debug</code></td>
+<td>补配置或换可用 DNS</td>
+</tr>
+<tr>
+<td>解析慢</td>
+<td>到 DNS 的 RTT、丢包</td>
+<td><code>ping</code>、<code>dig +trace</code></td>
+<td>换近的服务器、加缓存</td>
+</tr>
+<tr>
+<td>工具慢而 RTT 低</td>
+<td>PTR 请求无响应</td>
+<td><code>tcpdump -nn</code>、<code>ping -n</code></td>
+<td>关名称反查</td>
+</tr>
+<tr>
+<td>小包冲击</td>
+<td>PPS 高、包长约 54B</td>
+<td><code>sar -n DEV</code>、<code>netstat</code></td>
+<td>限速、队列、SYN Cookies</td>
+</tr>
+<tr>
+<td>并发延迟高</td>
+<td>流图中的等待间隔</td>
+<td><code>wrk</code>、Wireshark、<code>strace</code></td>
+<td>调整 TCP 选项后复测</td>
+</tr>
+</tbody></table>
+<p>本篇锚点那组 P99 800 毫秒、CPU 三成的结果，放到这张表上要分开测：单次 RTT 用 hping3，并发延迟用 wrk，两边差距大就抓包看流图。解析、反查、半开连接各走各自的证据链，网络这一层的结论才有依据。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>网络问题按现象分四路查：解析看配置和递归路径，工具总耗时看名称反查，连接建不上看 PPS 与半开连接表，并发延迟看单请求 RTT 与 TCP 流时序。<code>dig</code>、<code>tcpdump</code>、<code>sar</code>、<code>netstat</code>、<code>strace</code> 各管一段，抓包前先用表达式收窄范围，<code>-n</code> 关掉工具自己的反查。SYN 攻击只能缓解，报文进到服务器后内核开销已经产生；TCP 选项调整要先看到等待发生的那一跳，改完用同一组并发参数复测。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Wireshark 官方文档</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/09/11/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%B8%80%EF%BC%89%E7%BD%91%E7%BB%9C%E9%97%AE%E9%A2%98%E5%AE%9A%E4%BD%8D%E2%80%94%E2%80%94DNS%E3%80%81%E6%8A%93%E5%8C%85%E3%80%81%E5%BB%B6%E8%BF%9F%E4%B8%8E%20DDoS/" title="Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS">https://xssdpgy.github.io/2023/09/11/Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/%E7%BD%91%E7%BB%9C/" rel="tag"># 网络</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/" rel="prev" title="Linux 性能（十）网络协议栈与性能评估">
+      <i class="fa fa-chevron-left"></i> Linux 性能（十）网络协议栈与性能评估
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/09/13/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89NAT%20%E6%80%A7%E8%83%BD%E4%B8%8E%E7%BD%91%E7%BB%9C%E4%BC%98%E5%8C%96%E6%80%9D%E8%B7%AF/" rel="next" title="Linux 性能（十二）NAT 性能与网络优化思路">
+      Linux 性能（十二）NAT 性能与网络优化思路 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%9B%9B%E7%B1%BB%E7%8E%B0%E8%B1%A1%E7%9A%84%E5%88%86%E7%95%8C"><span class="nav-text">四类现象的分界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%8E%E5%BB%B6%E8%BF%9F%E6%8A%96%E5%8A%A8%E5%88%B0%E6%8A%93%E5%8C%85"><span class="nav-text">从延迟抖动到抓包</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#dig-%E4%B8%8E-tcpdump-%E5%91%BD%E4%BB%A4"><span class="nav-text">dig 与 tcpdump 命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B7%B3%E8%BF%87%E5%BD%92%E5%9B%A0%E5%B0%B1%E8%B0%83%E5%8F%82%E6%95%B0"><span class="nav-text">跳过归因就调参数</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%BD%91%E7%BB%9C%E5%BC%82%E5%B8%B8%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">网络异常速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '155e5aebe10ac33864bd9dd7f1cfbaab',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

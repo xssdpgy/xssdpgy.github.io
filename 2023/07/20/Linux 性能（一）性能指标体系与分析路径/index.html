@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言接口超时、P99 飘高，落到压测报告里就是一句「慢」。这个字没法直接查，得先换成数。工具倒是不缺，top、vmstat、iostat、sar 装一整套，敲下去就是一屏。难的是 CPU 没跑满、响应时间翻了几十倍，先看哪个，看到什么算查到头。从应用一直到硬件，哪一层都可能把请求拖住，几层一起出问题也有。报告里常常只写「CPU 没跑满，资源还有余量」，P99 那一段怎么涨的，没说。 这十四篇就照这">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（一）性能指标体系与分析路径">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/07/20/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%80%EF%BC%89%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E4%BD%93%E7%B3%BB%E4%B8%8E%E5%88%86%E6%9E%90%E8%B7%AF%E5%BE%84/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言接口超时、P99 飘高，落到压测报告里就是一句「慢」。这个字没法直接查，得先换成数。工具倒是不缺，top、vmstat、iostat、sar 装一整套，敲下去就是一屏。难的是 CPU 没跑满、响应时间翻了几十倍，先看哪个，看到什么算查到头。从应用一直到硬件，哪一层都可能把请求拖住，几层一起出问题也有。报告里常常只写「CPU 没跑满，资源还有余量」，P99 那一段怎么涨的，没说。 这十四篇就照这">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E8%B5%84%E6%BA%90%E8%A7%86%E8%A7%92%E4%B8%8E%E5%BA%94%E7%94%A8%E8%B4%9F%E8%BD%BD%E8%A7%86%E8%A7%92.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-Linux%E6%80%A7%E8%83%BD%E5%B7%A5%E5%85%B7%E9%80%9F%E6%9F%A5%E5%9B%BE.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E4%BB%8E%E6%8C%87%E6%A0%87%E5%88%B0%E5%B7%A5%E5%85%B7%E7%9A%84%E6%8E%92%E6%9F%A5%E8%B7%AF%E5%BE%84.png">
+<meta property="article:published_time" content="2023-07-20T15:29:07.000Z">
+<meta property="article:modified_time" content="2023-07-20T15:29:07.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="监控体系">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E8%B5%84%E6%BA%90%E8%A7%86%E8%A7%92%E4%B8%8E%E5%BA%94%E7%94%A8%E8%B4%9F%E8%BD%BD%E8%A7%86%E8%A7%92.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/07/20/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%80%EF%BC%89%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E4%BD%93%E7%B3%BB%E4%B8%8E%E5%88%86%E6%9E%90%E8%B7%AF%E5%BE%84/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（一）性能指标体系与分析路径 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/07/20/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%80%EF%BC%89%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E4%BD%93%E7%B3%BB%E4%B8%8E%E5%88%86%E6%9E%90%E8%B7%AF%E5%BE%84/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（一）性能指标体系与分析路径
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-07-20 23:29:07" itemprop="dateCreated datePublished" datetime="2023-07-20T23:29:07+08:00">2023-07-20</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.5k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>接口超时、P99 飘高，落到压测报告里就是一句「慢」。这个字没法直接查，得先换成数。工具倒是不缺，top、vmstat、iostat、sar 装一整套，敲下去就是一屏。难的是 CPU 没跑满、响应时间翻了几十倍，先看哪个，看到什么算查到头。从应用一直到硬件，哪一层都可能把请求拖住，几层一起出问题也有。报告里常常只写「CPU 没跑满，资源还有余量」，P99 那一段怎么涨的，没说。</p>
+<p>这十四篇就照这条路走。例子只用一套：4 核 8G、一块 SSD、千兆网卡，跑个 Java HTTP 服务。压测从 300 QPS 加到 3000，P99 从 40 毫秒涨到 800 毫秒，load 4.2，CPU 才 30%。机器和配置都没换，量级一上去就慢。慢在哪一层，从采到的数里找。</p>
+<p>篇目按四层资源排：CPU、内存、磁盘 I&#x2F;O、网络，最后两篇落到监控和整体排查。每篇配一个能重跑的实验，命令和输出原样贴出来。数怎么读、这么改要付什么代价、什么时候不必这么查，都写在里头。工具手册和内核实现不展开，用到再翻。十四篇目录：</p>
+<ul>
+<li>Linux 性能（一）性能指标体系与分析路径</li>
+<li>Linux 性能（二）平均负载与 CPU 使用率的判读</li>
+<li>Linux 性能（三）上下文切换与进程状态</li>
+<li>Linux 性能（四）软中断与中断升高的排查</li>
+<li>Linux 性能（五）CPU 瓶颈定位与优化手段的代价</li>
+<li>Linux 性能（六）内存工作原理与 Buffer Cache</li>
+<li>Linux 性能（七）内存泄漏、Swap 与回收机制</li>
+<li>Linux 性能（八）文件系统与磁盘 I O 工作原理</li>
+<li>Linux 性能（九）I O 瓶颈定位与优化</li>
+<li>Linux 性能（十）网络协议栈与性能评估</li>
+<li>Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS</li>
+<li>Linux 性能（十二）NAT 性能与网络优化思路</li>
+<li>Linux 性能（十三）动态追踪与容器场景</li>
+<li>Linux 性能（十四）监控体系与综合实战</li>
+</ul>
+<p>不必从头顺着读，手上是哪层现象就翻哪篇。</p>
+<span id="more"></span>
+
+<h2 id="性能指标的口径"><a href="#性能指标的口径" class="headerlink" title="性能指标的口径"></a>性能指标的口径</h2><p>「慢」是感受，得换成数才能查。压测报告里能落到纸面的就三类：单位时间完成多少请求、耗时怎么分布、失败占多少。少一类，后面的判断就会偏。只报 QPS 不说时延，高吞吐可能只是请求堆在队列里；换成平均耗时，长尾被抹平，超时但成功返回的慢请求在错误率里也一个都不算。</p>
+<p>时延要给分位值。100 个请求里 99 个 20 毫秒、1 个 2 秒，平均值 39.8 毫秒，比 40 毫秒的目标还好看一点，实际有人等了 2 秒。验收只能拿 P99、P999 对目标，平均值看看趋势就够了。分位值要在客户端统计：服务端埋点只记处理时间，排队和网络往返都漏掉，压测里的长尾多数出在这两段。</p>
+<p>资源侧按 USE 法看三项：使用率是资源忙了多久，饱和度是排队排了多久，错误数是明确失败的次数。</p>
+<blockquote>
+<p>性能问题的本质，就是系统资源已经达到瓶颈，但请求的处理却还不够快，无法支撑更多的请求。</p>
+</blockquote>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E8%B5%84%E6%BA%90%E8%A7%86%E8%A7%92%E4%B8%8E%E5%BA%94%E7%94%A8%E8%B4%9F%E8%BD%BD%E8%A7%86%E8%A7%92.png" alt="资源视角与应用负载视角"></p>
+<p><em>资源视角与应用负载视角</em></p>
+<p>应用侧的数和资源侧的数，中间隔着传导关系：</p>
+<pre class="mermaid">
+graph LR
+  A[&quot;应用负载&lt;br&#x2F;&gt;吞吐 &#x2F; 时延 &#x2F; 错误率&quot;] --&gt; B[&quot;资源使用&lt;br&#x2F;&gt;使用率 &#x2F; 饱和度 &#x2F; 错误数&quot;]
+  B --&gt; C[&quot;某层先到瓶颈&quot;]
+  C --&gt; D[&quot;请求开始排队&quot;]
+  D --&gt; E[&quot;P99 抬升&quot;]
+  E --&gt; A
+</pre>
+
+<p>使用率低也可能已经卡在瓶颈上。CPU 30% 而运行队列常驻 4，是低使用率高饱和；磁盘 util 60%，await 从 1 毫秒涨到 20 毫秒，同样的情况。压测报告里常有人看到「没跑满」就收工，排队的那部分数没进报告。</p>
+<table>
+<thead>
+<tr>
+<th>容易混的一组</th>
+<th>实际含义</th>
+<th>搞混之后</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>并发数 &#x2F; QPS</td>
+<td>同时在途的请求数 &#x2F; 单位时间完成的请求数</td>
+<td>并发翻倍就以为吞吐翻倍，实际耗时也翻倍</td>
+</tr>
+<tr>
+<td>平均响应时间 &#x2F; P99</td>
+<td>全体均值 &#x2F; 99% 请求的耗时上限</td>
+<td>均值达标但长尾用户超时</td>
+</tr>
+<tr>
+<td>使用率 &#x2F; 饱和度</td>
+<td>忙时占比 &#x2F; 排队程度</td>
+<td>看到 30% 就停止排查</td>
+</tr>
+<tr>
+<td>CPU 使用率 &#x2F; 平均负载</td>
+<td>CPU 忙闲 &#x2F; 运行队列与不可中断进程</td>
+<td>把 load 4.2 直接读成 CPU 用了 4 核</td>
+</tr>
+<tr>
+<td>吞吐 &#x2F; 错误率</td>
+<td>完成量 &#x2F; 失败占比</td>
+<td>只统计 5xx，漏掉客户端超时</td>
+</tr>
+</tbody></table>
+<h2 id="压测基线"><a href="#压测基线" class="headerlink" title="压测基线"></a>压测基线</h2><p>基线要在压测之前记，事后补不出来。机器规格、并发数、压测时长固定，低压高压各跑一轮，应用侧和系统侧在同一个时间窗里采，两轮数字才算对得上。压测时长别中途改，采样窗口一错，分位值没法比。</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>300 QPS</th>
+<th>3000 QPS</th>
+<th>读出来的信息</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>QPS</td>
+<td>300</td>
+<td>3000</td>
+<td>目标压测值，两轮都跑满</td>
+</tr>
+<tr>
+<td>P50</td>
+<td>18ms</td>
+<td>46ms</td>
+<td>中位耗时涨 2.5 倍</td>
+</tr>
+<tr>
+<td>P99</td>
+<td>40ms</td>
+<td>800ms</td>
+<td>涨 20 倍，远快于 P50</td>
+</tr>
+<tr>
+<td>P999</td>
+<td>92ms</td>
+<td>1.6s</td>
+<td>尾部已经越过 1 秒</td>
+</tr>
+<tr>
+<td>错误率</td>
+<td>0.02%</td>
+<td>0.4%</td>
+<td>客户端超时开始出现</td>
+</tr>
+<tr>
+<td>CPU us + sy</td>
+<td>12%</td>
+<td>30%</td>
+<td>算力没跑满</td>
+</tr>
+<tr>
+<td>iowait</td>
+<td>1%</td>
+<td>18%</td>
+<td>有等待，但不足以独自解释 800ms</td>
+</tr>
+<tr>
+<td>load average</td>
+<td>0.8</td>
+<td>4.2</td>
+<td>4 核机器上队列接近满载</td>
+</tr>
+<tr>
+<td>可用内存</td>
+<td>5.1G</td>
+<td>3.4G</td>
+<td>差额主要是页缓存，不是泄漏证据</td>
+</tr>
+<tr>
+<td>磁盘 await &#x2F; util</td>
+<td>1.2ms &#x2F; 8%</td>
+<td>24ms &#x2F; 61%</td>
+<td>有压力，没打满</td>
+</tr>
+<tr>
+<td>网卡重传</td>
+<td>0</td>
+<td>少量</td>
+<td>需要单独确认是否相关</td>
+</tr>
+</tbody></table>
+<p>P50 涨 2.5 倍，P99 涨 20 倍，变慢的只是一部分请求，这部分在等什么得往下追。CPU 30% 和 load 4.2 能同时成立：一个记忙闲，一个记队列长度，队列里排着的可能全是等 I&#x2F;O 或等锁的进程。</p>
+<p>「等什么」可以拆成几条能用数字否掉的假设：</p>
+<table>
+<thead>
+<tr>
+<th>假设</th>
+<th>若成立，哪个指标会变</th>
+<th>先用的工具</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>上下文切换与调度延迟</td>
+<td>每秒切换数、非自愿切换上升</td>
+<td><code>vmstat</code>、<code>pidstat -w</code></td>
+</tr>
+<tr>
+<td>日志写放大、块设备等待</td>
+<td><code>await</code>、<code>iowait</code> 继续抬升</td>
+<td><code>iostat</code>、<code>strace</code></td>
+</tr>
+<tr>
+<td>软中断或网络重传</td>
+<td><code>softirqs</code>、重传计数上升</td>
+<td><code>/proc/softirqs</code>、<code>sar -n</code></td>
+</tr>
+<tr>
+<td>应用锁或依赖服务变慢</td>
+<td>线程 D 状态增多、应用耗时分段偏移</td>
+<td>应用指标、<code>strace</code></td>
+</tr>
+<tr>
+<td>页缓存回收与缺页</td>
+<td>major fault、内存 PSI 上升</td>
+<td><code>vmstat</code>、<code>/proc/pressure/memory</code></td>
+</tr>
+</tbody></table>
+<pre class="mermaid">
+graph TD
+  S[&quot;P99 40ms → 800ms&quot;] --&gt; Q{&quot;CPU 是否跑满?&quot;}
+  Q -- &quot;否, 30%&quot; --&gt; U{&quot;排队发生在哪一层?&quot;}
+  Q -- &quot;是&quot; --&gt; T5[&quot;先按 CPU 侧定位热点&quot;]
+  U --&gt; C1[&quot;上下文切换 &#x2F; 调度&quot;]
+  U --&gt; C2[&quot;iowait &#x2F; 块设备&quot;]
+  U --&gt; C3[&quot;软中断 &#x2F; 网络重传&quot;]
+  U --&gt; C4[&quot;应用锁 &#x2F; 依赖服务&quot;]
+  C1 --&gt; T1[&quot;vmstat &#x2F; pidstat -w &#x2F; perf&quot;]
+  C2 --&gt; T2[&quot;iostat &#x2F; blktrace&quot;]
+  C3 --&gt; T3[&quot;sar -n &#x2F; tcpdump&quot;]
+  C4 --&gt; T4[&quot;应用耗时分段 &#x2F; strace&quot;]
+</pre>
+
+<p>图里每个分支都挂着一个能观测的数，看完没变化就划掉，换下一条假设。指标涨没涨得有参照，前面两轮基线就是拿来当这个参照的。</p>
+<h2 id="指标采集命令"><a href="#指标采集命令" class="headerlink" title="指标采集命令"></a>指标采集命令</h2><p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-Linux%E6%80%A7%E8%83%BD%E5%B7%A5%E5%85%B7%E9%80%9F%E6%9F%A5%E5%9B%BE.png" alt="Linux 性能工具速查图"></p>
+<p><em>Linux 性能工具速查图</em></p>
+<p>这张速查表的用处很窄：知道要看哪个指标，想不起该敲哪条命令时翻一下。命令已经记得，直接查手册更快。</p>
+<blockquote>
+<p>只有当你想了解某个性能指标，却不知道该怎么办的时候，才会想到「要是有一个性能工具速查表就好了」。</p>
+</blockquote>
+<p>一轮采样的命令序列，应用侧与系统侧放在同一个时间窗里：</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># 应用负载：固定并发与时长，取分位值</span></span><br><span class="line">wrk -t4 -c200 -d60s --latency http://127.0.0.1:8080/query</span><br><span class="line"></span><br><span class="line"><span class="comment"># 系统资源：同一时间窗内并行采样</span></span><br><span class="line"><span class="built_in">uptime</span></span><br><span class="line">mpstat -P ALL 1 3</span><br><span class="line">vmstat 1 5</span><br><span class="line">pidstat -u -r -d 1 5</span><br><span class="line">sar -n DEV 1 5</span><br><span class="line"></span><br><span class="line"><span class="comment"># 原始入口：上面这些工具的输出都从这里来</span></span><br><span class="line"><span class="built_in">cat</span> /proc/loadavg</span><br><span class="line"><span class="built_in">head</span> -1 /proc/stat</span><br><span class="line"><span class="built_in">cat</span> /proc/pressure/cpu 2&gt;/dev/null || <span class="literal">true</span></span><br></pre></td></tr></table></figure>
+
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">uptime</span></span><br><span class="line"> 23:12:07 up 12 days,  4:31,  1 user,  load average: 4.20, 3.86, 2.11</span><br><span class="line"></span><br><span class="line">$ <span class="built_in">head</span> -1 /proc/stat</span><br><span class="line">cpu  182340 4210 98312 4210876 18760 0 9840 0 0 0</span><br><span class="line"><span class="comment">#   user    nice system idle    iowait irq softirq steal guest guest_nice</span></span><br><span class="line"><span class="comment">#   单位均为节拍数，取两次快照做差，才能算区间使用率</span></span><br><span class="line"></span><br><span class="line">$ <span class="built_in">cat</span> /proc/loadavg</span><br><span class="line">4.20 3.86 2.11 6/412 28713</span><br><span class="line"><span class="comment">#   前三个是 1/5/15 分钟平均负载；6/412 表示运行队列中 6 个、总进程 412 个</span></span><br></pre></td></tr></table></figure>
+
+<p>常用的 <code>/proc</code> 入口就这些，监控看板也是按时间反复读这些文件：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">/proc</span><br><span class="line">├── loadavg                  # 1/5/15 分钟平均负载、运行队列</span><br><span class="line">├── stat                     # 全局 CPU 时间分片</span><br><span class="line">├── softirqs                 # 各类软中断累计次数</span><br><span class="line">├── interrupts               # 硬中断累计次数</span><br><span class="line">├── meminfo                  # 内存、Buffer/Cache、Swap</span><br><span class="line">├── diskstats                # 块设备读写与等待</span><br><span class="line">├── pressure/                # CPU / 内存 / I/O 的饱和度</span><br><span class="line">│   ├── cpu</span><br><span class="line">│   ├── memory</span><br><span class="line">│   └── io</span><br><span class="line">├── net/dev                  # 网卡收发、丢包、错误</span><br><span class="line">└── &lt;PID&gt;/</span><br><span class="line">    ├── stat                 # 进程 CPU 时间、状态</span><br><span class="line">    ├── status               # 内存与线程数</span><br><span class="line">    └── io                   # 进程读写字节数</span><br></pre></td></tr></table></figure>
+
+<p>手工敲命令看的是这一秒，单机临时排查够用；瓶颈往往是过去几分钟攒出来的，长期还得靠按时间采样的监控数据，命令留给验证假设。另外 <code>/proc</code> 里多数数值是开机以来的累计计数，使用率得取两次快照做差，拿累计值当百分比会差出好几倍。</p>
+<h2 id="平均值的误读"><a href="#平均值的误读" class="headerlink" title="平均值的误读"></a>平均值的误读</h2><p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-01-%E4%BB%8E%E6%8C%87%E6%A0%87%E5%88%B0%E5%B7%A5%E5%85%B7%E7%9A%84%E6%8E%92%E6%9F%A5%E8%B7%AF%E5%BE%84.png" alt="从指标到工具的排查路径"></p>
+<p><em>从指标到工具的排查路径</em></p>
+<ol>
+<li><strong>用平均响应时间验收</strong>。上面那组数里 P99 已经 800 毫秒，平均值可能只有 70 毫秒，报告写「平均 70ms，达标」，等了将近 1 秒的那批用户就不见了。SLO 得绑分位值，平均值留着看趋势。</li>
+<li><strong>CPU 没跑满就判机器没问题</strong>。等待也可能发生在块设备、网络、应用锁或者内存回收上。30% 只排除了算力耗尽这一条。</li>
+<li><strong>只看单机资源，不看应用侧分段</strong>。数据库慢查询、下游限流都能压低吞吐，本机指标这时候全正常。应用侧耗时分段要在基线那一轮就采上。</li>
+<li><strong>指标没到拐点就调内核参数</strong>。连接跟踪表、缓冲区、超时值改一行就生效，可没有可比基线，改完压测数字动没动说不清，参数倒是一直留在机器上。</li>
+<li><strong>把工具输出当结论</strong>。<code>top</code> 里排第一的进程未必是瓶颈，中间还差一步：哪个指标异常、据此假设什么、拿哪条命令验。</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>什么情况不必这么做</th>
+<th>原因</th>
+<th>替代做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>单机日请求几千、P99 长期稳定在 50ms 内</td>
+<td>离拐点很远，采集与看板成本大于收益</td>
+<td>只留错误率和基础资源告警</td>
+</tr>
+<tr>
+<td>离线批处理、定时报表</td>
+<td>关心总耗时与产出正确性，分位值没有意义</td>
+<td>记作业起止时间与失败率</td>
+</tr>
+<tr>
+<td>压测环境与生产规格不一致</td>
+<td>CPU 核数、磁盘类型一变，基线不可迁移</td>
+<td>先在同规格环境重跑两轮</td>
+</tr>
+<tr>
+<td>瓶颈明确在依赖服务</td>
+<td>单机指标再细也改不动下游</td>
+<td>先看调用链耗时占比</td>
+</tr>
+<tr>
+<td>没有 SLO 的内部工具</td>
+<td>「变慢」没有目标值就无法判定</td>
+<td>先定一个可接受的 P99 上限</td>
+</tr>
+</tbody></table>
+<h2 id="时延、吞吐与利用率"><a href="#时延、吞吐与利用率" class="headerlink" title="时延、吞吐与利用率"></a>时延、吞吐与利用率</h2><table>
+<thead>
+<tr>
+<th>指标</th>
+<th>口径</th>
+<th>采集入口</th>
+<th>常见误读</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>QPS &#x2F; TPS</td>
+<td>单位时间完成的请求数</td>
+<td>客户端压测工具、应用埋点</td>
+<td>与并发数混为一谈</td>
+</tr>
+<tr>
+<td>P50 &#x2F; P99 &#x2F; P999</td>
+<td>耗时分位值，不是平均</td>
+<td>压测工具 <code>--latency</code>、应用直方图</td>
+<td>用平均值代表体验</td>
+</tr>
+<tr>
+<td>错误率</td>
+<td>失败请求 &#x2F; 总请求</td>
+<td>客户端统计、应用埋点</td>
+<td>只算 5xx，漏掉超时</td>
+</tr>
+<tr>
+<td>CPU 使用率</td>
+<td>忙时 &#x2F; 总时间，分 us、sy、iowait</td>
+<td><code>/proc/stat</code>、<code>mpstat</code></td>
+<td>忽略 iowait 与 steal</td>
+</tr>
+<tr>
+<td>饱和度</td>
+<td>排队程度</td>
+<td><code>/proc/pressure</code>、<code>vmstat</code> 运行队列</td>
+<td>与使用率当成同一个数</td>
+</tr>
+<tr>
+<td>平均负载</td>
+<td>运行队列 + 不可中断进程</td>
+<td><code>/proc/loadavg</code>、<code>uptime</code></td>
+<td>直接读成 CPU 核数占用</td>
+</tr>
+<tr>
+<td>磁盘 await &#x2F; util</td>
+<td>单次 I&#x2F;O 等待 &#x2F; 设备忙时占比</td>
+<td><code>/proc/diskstats</code>、<code>iostat</code></td>
+<td>util 没到 100% 就排除磁盘</td>
+</tr>
+<tr>
+<td>网络丢包 &#x2F; 重传</td>
+<td>各协议层错误数</td>
+<td><code>/proc/net/dev</code>、<code>sar -n</code></td>
+<td>只看带宽不看重传</td>
+</tr>
+</tbody></table>
+<p>课程把性能工作拆成六步：选择指标、设定目标、基准测试、定位瓶颈、优化、监控告警。第二步常被跳过。目标得在压测之前定，看到 800 毫秒再回头说「P99 放宽到 1 秒吧」，这组数就没法用了。「能扛多少 QPS」也得先挂一个 P99 上限，不然同一套系统能报出相差十倍的两个数。</p>
+<p>监控和告警排在六步末尾，采集不能等到最后才开。线上劣化发生在压测之外，判断有没有变差得翻历史曲线，前面那两轮基线只够覆盖压测这段时间。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>800 毫秒的 P99 配上 30% 的 CPU 使用率，算力还有余量，排队已经发生。往下追「在等什么」，写成几条能用数字否掉的假设，再按资源层一条条验。动配置之前，压测那两轮基线和客户端的分位值得先留着，不然改完无从比对。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/07/20/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%80%EF%BC%89%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E4%BD%93%E7%B3%BB%E4%B8%8E%E5%88%86%E6%9E%90%E8%B7%AF%E5%BE%84/" title="Linux 性能（一）性能指标体系与分析路径">https://xssdpgy.github.io/2023/07/20/Linux 性能（一）性能指标体系与分析路径/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/%E7%9B%91%E6%8E%A7%E4%BD%93%E7%B3%BB/" rel="tag"># 监控体系</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/07/12/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%E4%BA%8C%EF%BC%89%E4%BF%A1%E6%81%AF%E6%B5%81%E7%B3%BB%E7%BB%9F%E7%9A%84%E6%8E%A8%E6%8B%89%E6%A8%A1%E5%BC%8F%E5%8F%96%E8%88%8D/" rel="prev" title="高并发（十二）信息流系统的推拉模式取舍">
+      <i class="fa fa-chevron-left"></i> 高并发（十二）信息流系统的推拉模式取舍
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/07/21/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%BA%8C%EF%BC%89%E5%B9%B3%E5%9D%87%E8%B4%9F%E8%BD%BD%E4%B8%8E%20CPU%20%E4%BD%BF%E7%94%A8%E7%8E%87%E7%9A%84%E5%88%A4%E8%AF%BB/" rel="next" title="Linux 性能（二）平均负载与 CPU 使用率的判读">
+      Linux 性能（二）平均负载与 CPU 使用率的判读 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E7%9A%84%E5%8F%A3%E5%BE%84"><span class="nav-text">性能指标的口径</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8E%8B%E6%B5%8B%E5%9F%BA%E7%BA%BF"><span class="nav-text">压测基线</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%8C%87%E6%A0%87%E9%87%87%E9%9B%86%E5%91%BD%E4%BB%A4"><span class="nav-text">指标采集命令</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B9%B3%E5%9D%87%E5%80%BC%E7%9A%84%E8%AF%AF%E8%AF%BB"><span class="nav-text">平均值的误读</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%97%B6%E5%BB%B6%E3%80%81%E5%90%9E%E5%90%90%E4%B8%8E%E5%88%A9%E7%94%A8%E7%8E%87"><span class="nav-text">时延、吞吐与利用率</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '612e0df8d87e6652aee0cb3d7d49ffcb',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

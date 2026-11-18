@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言磁盘和文件系统这一层，最容易被跳过的是原理，最容易被用错的是指标。磁盘空间明明还有，文件却创建不出来，往往是 inode 用尽；%util 到了 100%，也不一定就该换盘——它只统计有没有 I&#x2F;O，不管请求多大。这篇把从应用到磁盘的整条 I&#x2F;O 栈拆开，看清每一层做什么、缓存放在哪，再辨析阻塞&#x2F;非阻塞与同步&#x2F;异步这两组常被混用的概念，最后落到 df -">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（八）文件系统与磁盘 I O 工作原理">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言磁盘和文件系统这一层，最容易被跳过的是原理，最容易被用错的是指标。磁盘空间明明还有，文件却创建不出来，往往是 inode 用尽；%util 到了 100%，也不一定就该换盘——它只统计有没有 I&#x2F;O，不管请求多大。这篇把从应用到磁盘的整条 I&#x2F;O 栈拆开，看清每一层做什么、缓存放在哪，再辨析阻塞&#x2F;非阻塞与同步&#x2F;异步这两组常被混用的概念，最后落到 df -">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E7%9B%AE%E5%BD%95%E9%A1%B9%E7%B4%A2%E5%BC%95%E8%8A%82%E7%82%B9%E4%B8%8E%E7%A3%81%E7%9B%98%E5%85%B3%E7%B3%BB.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E6%9E%B6%E6%9E%84%E5%9B%BE.png">
+<meta property="article:published_time" content="2023-08-23T13:28:32.000Z">
+<meta property="article:modified_time" content="2023-08-23T13:28:32.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="磁盘 I&#x2F;O">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E7%9B%AE%E5%BD%95%E9%A1%B9%E7%B4%A2%E5%BC%95%E8%8A%82%E7%82%B9%E4%B8%8E%E7%A3%81%E7%9B%98%E5%85%B3%E7%B3%BB.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（八）文件系统与磁盘 I O 工作原理 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（八）文件系统与磁盘 I O 工作原理
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-23 21:28:32" itemprop="dateCreated datePublished" datetime="2023-08-23T21:28:32+08:00">2023-08-23</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>磁盘和文件系统这一层，最容易被跳过的是原理，最容易被用错的是指标。磁盘空间明明还有，文件却创建不出来，往往是 inode 用尽；%util 到了 100%，也不一定就该换盘——它只统计有没有 I&#x2F;O，不管请求多大。这篇把从应用到磁盘的整条 I&#x2F;O 栈拆开，看清每一层做什么、缓存放在哪，再辨析阻塞&#x2F;非阻塞与同步&#x2F;异步这两组常被混用的概念，最后落到 <code>df -i</code>、<code>iostat</code>、<code>/proc/diskstats</code> 这些观测点。本篇锚点那组数——CPU 三成、P99 800 毫秒——在 I&#x2F;O 层对应的是请求排队等磁盘，而不是算力不够。</p>
+<span id="more"></span>
+
+<h2 id="文件系统与-I-O-栈"><a href="#文件系统与-I-O-栈" class="headerlink" title="文件系统与 I O 栈"></a>文件系统与 I O 栈</h2><p>Linux 里一切皆文件，普通文件、目录、块设备、套接字、管道都走统一的文件系统接口。文件系统管理文件靠两个结构：索引节点（inode）记录文件大小、权限、修改时间、数据位置这些元数据，和文件一一对应，存在磁盘上；目录项（dentry）记录文件名、inode 指针和目录关系，由内核维护在内存里，也就是目录项缓存。一个文件可以有多个目录项——硬链接就是不同名字指向同一个 inode。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E7%9B%AE%E5%BD%95%E9%A1%B9%E7%B4%A2%E5%BC%95%E8%8A%82%E7%82%B9%E4%B8%8E%E7%A3%81%E7%9B%98%E5%85%B3%E7%B3%BB.png" alt="目录项、索引节点与磁盘逻辑块的关系"></p>
+<p><em>目录项、索引节点与磁盘逻辑块的关系</em></p>
+<p>磁盘读写的最小单位是扇区，512 字节，一次读写这么小块效率太低，文件系统就把连续扇区组成逻辑块，常见 4 KB，作为最小管理单元。磁盘格式化后划成三个区：超级块存整个文件系统的状态，索引节点区存 inode，数据块区存文件数据。</p>
+<p>为了兼容 Ext4、XFS、NFS 这些实现各异的文件系统，内核在应用和具体文件系统之间加了虚拟文件系统 VFS，定义统一的数据结构和接口。应用只需跟 VFS 打交道，不必关心底层是哪种文件系统。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E6%9E%B6%E6%9E%84%E5%9B%BE.png" alt="Linux 文件系统架构：系统调用、VFS、缓存与块设备"></p>
+<p><em>Linux 文件系统架构：系统调用、VFS、缓存与块设备</em></p>
+<p>最底下的设备层，磁盘分机械和固态两类。机械盘靠磁头在盘片上寻道，连续 I&#x2F;O 省去寻址最快，随机 I&#x2F;O 要反复移动磁头，慢得多；固态盘没有机械寻址，随机性能远好于机械盘，但有「先擦除再写入」的限制，随机写会触发垃圾回收，同样比连续写慢。所以两类盘的随机 I&#x2F;O 都逊于连续 I&#x2F;O，只是差距大小不同。机械盘最小读写单位是 512 字节的扇区，固态盘是页，常见 4 KB 或 8 KB。</p>
+<p>再往上还有一层通用块层，它处在文件系统和磁盘驱动之间，向上提供访问块设备的标准接口，向下把各种磁盘抽象成统一块设备，还负责给 I&#x2F;O 请求排队、排序、合并——这就是 I&#x2F;O 调度。它支持四种调度算法：NOOP 是简单先入先出，常用于固态盘；CFQ 为每个进程维护队列、按时间片分配，适合进程多的桌面环境；DeadLine 给读写分队列、保证请求在期限内完成，多用于数据库这类 I&#x2F;O 压力重的场景；NONE 则完全不调度，常见于虚拟机，把调度交给物理机。整条栈自上而下是文件系统层、通用块层、设备层。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;应用程序&quot;] --&gt; B[&quot;系统调用 open&#x2F;read&#x2F;write&quot;]
+    B --&gt; C[&quot;VFS 与页缓存 &#x2F; 目录项缓存 &#x2F; 索引节点缓存&quot;]
+    C --&gt; D[&quot;具体文件系统 Ext4 &#x2F; XFS &#x2F; NFS&quot;]
+    D --&gt; E[&quot;通用块层 I&#x2F;O 队列 + 调度器&quot;]
+    E --&gt; F[&quot;设备层 磁盘驱动与存储设备&quot;]
+    E -.-&gt; G[&quot;缓冲区 Buffer&quot;]
+</pre>
+
+<p>I&#x2F;O 分类常按四个维度切：是否用标准库缓存，分缓冲与非缓冲 I&#x2F;O；是否用系统页缓存，分直接（O_DIRECT）与非直接 I&#x2F;O；是否阻塞调用线程，分阻塞与非阻塞 I&#x2F;O（O_NONBLOCK）；是否等待完成结果，分同步与异步 I&#x2F;O（O_SYNC、O_ASYNC）。这四组是不同角度的划分，彼此正交。</p>
+<h2 id="df-i-与容量假象"><a href="#df-i-与容量假象" class="headerlink" title="df -i 与容量假象"></a>df -i 与容量假象</h2><p>文件系统最常见的故障是空间不足，但有两类「不足」长得不一样。用 df 看块空间，另有 inode 的使用情况要单独看。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">df</span> -h /dev/sda1</span><br><span class="line">Filesystem Size Used Avail Use% Mounted on</span><br><span class="line">/dev/sda1   29G  3.1G   26G  11% /</span><br><span class="line">$ <span class="built_in">df</span> -i /dev/sda1</span><br><span class="line">Filesystem Inodes IUsed IFree IUse% Mounted on</span><br><span class="line">/dev/sda1  3870720 157460 3713260 5% /</span><br></pre></td></tr></table></figure>
+
+<p>inode 数量在格式化磁盘时就定好了。当磁盘空间还富余、df -i 却显示 inode 用满，多半是海量小文件造成的——每个文件不管多小都要占一个 inode。这时删掉多余小文件，或把它们移到 inode 充足的其他磁盘，空间自然就腾出来了。只看 df -h 的百分比，会以为磁盘还有大把空间，找不到创建文件失败的原因。</p>
+<p>缓存这一侧，索引节点和目录项都由 Slab 管理，<code>/proc/meminfo</code> 只给 Slab 总量，细分要到 <code>/proc/slabinfo</code> 看。页缓存和可回收 Slab 的大小则直接从 meminfo 读。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ <span class="built_in">cat</span> /proc/meminfo | grep -E <span class="string">&quot;SReclaimable|Cached&quot;</span></span><br><span class="line">Cached:        748316 kB</span><br><span class="line">SReclaimable:  179508 kB</span><br></pre></td></tr></table></figure>
+
+<h2 id="iostat-与-diskstats-观测点"><a href="#iostat-与-diskstats-观测点" class="headerlink" title="iostat 与 diskstats 观测点"></a>iostat 与 diskstats 观测点</h2><p>磁盘性能看五个指标：使用率、饱和度、IOPS、吞吐量、响应时间。使用率是处理 I&#x2F;O 的时间占比，饱和度是繁忙程度，IOPS 是每秒请求数，吞吐量是每秒请求大小，响应时间是从发出到收到响应的间隔。使用率到 100% 时磁盘仍可能接受新请求，因为它只统计有没有 I&#x2F;O、不管大小；饱和度到 100% 才真的接不了新请求。</p>
+<p>iostat 是最常用的观测工具，数据来自 <code>/proc/diskstats</code>。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ iostat -d -x 1</span><br><span class="line">Device r/s w/s rkB/s wkB/s r_await w_await aqu-sz rareq-sz wareq-sz %util</span><br><span class="line">sda    0.0 0.0  0.0   0.0    0.0    0.0     0.0     0.0      0.0     0.0</span><br><span class="line">sdb    0.0 0.0  0.0   0.0    0.0    0.0     0.0     0.0      0.0     0.0</span><br></pre></td></tr></table></figure>
+
+<p>几个换算要记牢：<code>r/s + w/s</code> 是 IOPS，<code>rkB/s + wkB/s</code> 是吞吐量，<code>r_await + w_await</code> 是响应时间，<code>%util</code> 是使用率。分析时还要结合请求大小 <code>rareq-sz</code> 和 <code>wareq-sz</code>——小文件多的随机读写场景看 IOPS 更准，顺序读写为主的多媒体场景看吞吐量更准。饱和度 iostat 给不出来，拿平均队列长度 <code>aqu-sz</code> 或等待时间和 fio 的基准结果比，才能估算。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">$ cat /proc/diskstats</span><br><span class="line">   8       0 sda 117864 4392 10293824 125881 205791 14536 8804421 3005812 0 3112310 3133220</span><br></pre></td></tr></table></figure>
+
+<p>进程这一级用 pidstat -d 或 iotop。前者给出每个进程的读写速率和块 I&#x2F;O 延迟，后者按 I&#x2F;O 大小排序找大户。iostat 只看磁盘整体，回答不了「是谁在读写」，这一步得靠这两个工具补。</p>
+<h2 id="同步异步与阻塞的混淆"><a href="#同步异步与阻塞的混淆" class="headerlink" title="同步异步与阻塞的混淆"></a>同步异步与阻塞的混淆</h2><p>四组 I&#x2F;O 概念里，最常混的是阻塞&#x2F;非阻塞和同步&#x2F;异步。前者针对调用者——应用发出 I&#x2F;O 后，线程是挂起等待还是继续干活；后者针对执行者——系统处理完 I&#x2F;O 后，是用系统调用返回结果，还是用事件通知。</p>
+<pre class="mermaid">
+flowchart LR
+    A[&quot;一次 I&#x2F;O&quot;] --&gt; B{&quot;调用者线程是否挂起&quot;}
+    B --&gt;|&quot;挂起&quot;| C[&quot;阻塞 I&#x2F;O&quot;]
+    B --&gt;|&quot;不挂起&quot;| D[&quot;非阻塞 I&#x2F;O&quot;]
+    A --&gt; E{&quot;结果如何通知&quot;}
+    E --&gt;|&quot;等待完成后返回&quot;| F[&quot;同步 I&#x2F;O&quot;]
+    E --&gt;|&quot;事件或回调通知&quot;| G[&quot;异步 I&#x2F;O&quot;]
+</pre>
+
+<p>read 是同步读，拿到磁盘数据前不返回；aio_read 是异步读，系统先返回，结果通过回调通知。套接字 send 默认阻塞，设了 O_NONBLOCK 就不阻塞，配合 epoll 可以在不可写时转去处理别的套接字。两组维度可以组合，非阻塞的调用照样可能用同步方式返回结果，轮询就是这种情况；把它当成异步，会在结果何时到达上判断错。</p>
+<p>观测工具本身也会出错。用 strace 跟踪一个多线程进程的 write，可能一条都看不到，加 <code>-f</code> 跟踪所有线程才有结果。工具的输出不合理时，先检查选项和原理，别急着下结论。</p>
+<h2 id="磁盘-I-O-指标速查表"><a href="#磁盘-I-O-指标速查表" class="headerlink" title="磁盘 I O 指标速查表"></a>磁盘 I O 指标速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>含义</th>
+<th>下一步</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>空间足却无法建文件</td>
+<td>df -h 有余、df -i 用满</td>
+<td>inode 耗尽</td>
+<td>清理小文件或换盘</td>
+</tr>
+<tr>
+<td>磁盘繁忙</td>
+<td>iostat %util 超 80%</td>
+<td>处理 I&#x2F;O 时间占比高</td>
+<td>结合请求大小判断类型</td>
+</tr>
+<tr>
+<td>队列堆积</td>
+<td>aqu-sz 持续高于基线</td>
+<td>请求排队</td>
+<td>和 fio 基准比饱和度</td>
+</tr>
+<tr>
+<td>随机读写慢</td>
+<td>IOPS 高、吞吐低</td>
+<td>小 I&#x2F;O 为主</td>
+<td>看 rareq-sz、考虑合并</td>
+</tr>
+<tr>
+<td>顺序读写慢</td>
+<td>吞吐高、IOPS 低</td>
+<td>大 I&#x2F;O 为主</td>
+<td>看 wareq-sz 与预读</td>
+</tr>
+<tr>
+<td>分不清谁在读写</td>
+<td>iostat 只有整盘数据</td>
+<td>缺进程维度</td>
+<td>pidstat -d 或 iotop 排序</td>
+</tr>
+<tr>
+<td>strace 看不到 write</td>
+<td>多线程未跟踪全</td>
+<td>选项不当</td>
+<td>加 -f 跟踪所有线程</td>
+</tr>
+</tbody></table>
+<p>本篇锚点里 CPU 三成、P99 800 毫秒，在 I&#x2F;O 层对应请求排队：应用发出读请求后挂起等待，CPU 闲着，延迟却全堆在等磁盘上。查法是从 iostat 看整盘是不是忙、从 pidstat -d 找出读写大户，再判断是随机小 I&#x2F;O 还是顺序大 I&#x2F;O，决定该调调度、合并请求还是扩容量。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>文件系统用 inode 存元数据、dentry 维护目录树，两者经 VFS 接入，之下还有通用块层负责排队、排序和合并，I&#x2F;O 栈分文件系统层、通用块层、设备层三层。inode 在格式化时定量，小文件过多会先耗尽 inode 而非块空间。磁盘性能看使用率、饱和度、IOPS、吞吐、响应时间五项，iostat 给出其中几项的换算，进程维度要用 pidstat -d 或 iotop 补。阻塞&#x2F;非阻塞看调用者线程是否挂起，同步&#x2F;异步看结果如何通知，两组维度正交互不替代。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/" title="Linux 性能（八）文件系统与磁盘 I O 工作原理">https://xssdpgy.github.io/2023/08/23/Linux 性能（八）文件系统与磁盘 I O 工作原理/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E7%A3%81%E7%9B%98-I-O/" rel="tag"># 磁盘 I/O</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/15/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B8%83%EF%BC%89%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E3%80%81Swap%20%E4%B8%8E%E5%9B%9E%E6%94%B6%E6%9C%BA%E5%88%B6/" rel="prev" title="Linux 性能（七）内存泄漏、Swap 与回收机制">
+      <i class="fa fa-chevron-left"></i> Linux 性能（七）内存泄漏、Swap 与回收机制
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/" rel="next" title="Linux 性能（九）I O 瓶颈定位与优化">
+      Linux 性能（九）I O 瓶颈定位与优化 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E-I-O-%E6%A0%88"><span class="nav-text">文件系统与 I O 栈</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#df-i-%E4%B8%8E%E5%AE%B9%E9%87%8F%E5%81%87%E8%B1%A1"><span class="nav-text">df -i 与容量假象</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#iostat-%E4%B8%8E-diskstats-%E8%A7%82%E6%B5%8B%E7%82%B9"><span class="nav-text">iostat 与 diskstats 观测点</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%90%8C%E6%AD%A5%E5%BC%82%E6%AD%A5%E4%B8%8E%E9%98%BB%E5%A1%9E%E7%9A%84%E6%B7%B7%E6%B7%86"><span class="nav-text">同步异步与阻塞的混淆</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A3%81%E7%9B%98-I-O-%E6%8C%87%E6%A0%87%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">磁盘 I O 指标速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '2f702270434a023977496f6f1872dc2c',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
