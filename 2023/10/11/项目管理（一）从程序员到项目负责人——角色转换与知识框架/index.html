@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言技术做得好，就会被推去带项目，这是很多工程师职业路径上的第一个分岔口。推过去之后，日常工作却换了一套逻辑：以前把代码写完就算交付，现在进度、质量、跨部门配合都要你来兜底；以前产出握在自己手里，现在几乎全部依赖别人。这道能力落差，多写几行代码补不上，它首先需要一次角色认知的切换，以及一张能鸟瞰全局的知识地图。 这一部分要处理的就是这两件事：从「管好自己的事」到「通过别人拿结果」，容易踩哪些坑；以">
+<meta property="og:type" content="article">
+<meta property="og:title" content="项目管理（一）从程序员到项目负责人——角色转换与知识框架">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/10/11/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%80%EF%BC%89%E4%BB%8E%E7%A8%8B%E5%BA%8F%E5%91%98%E5%88%B0%E9%A1%B9%E7%9B%AE%E8%B4%9F%E8%B4%A3%E4%BA%BA%E2%80%94%E2%80%94%E8%A7%92%E8%89%B2%E8%BD%AC%E6%8D%A2%E4%B8%8E%E7%9F%A5%E8%AF%86%E6%A1%86%E6%9E%B6/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言技术做得好，就会被推去带项目，这是很多工程师职业路径上的第一个分岔口。推过去之后，日常工作却换了一套逻辑：以前把代码写完就算交付，现在进度、质量、跨部门配合都要你来兜底；以前产出握在自己手里，现在几乎全部依赖别人。这道能力落差，多写几行代码补不上，它首先需要一次角色认知的切换，以及一张能鸟瞰全局的知识地图。 这一部分要处理的就是这两件事：从「管好自己的事」到「通过别人拿结果」，容易踩哪些坑；以">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E5%85%B3%E7%B3%BB%E5%9B%BE.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E4%BA%94%E5%A4%A7%E8%BF%87%E7%A8%8B%E7%BB%84%E7%9F%A9%E9%98%B5.jpg">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E4%BA%8C%E5%AD%97%E8%81%8C%E8%B4%A3%E7%BA%B2%E9%A2%86.png">
+<meta property="article:published_time" content="2023-10-11T14:41:05.000Z">
+<meta property="article:modified_time" content="2023-10-11T14:41:05.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="项目管理">
+<meta property="article:tag" content="团队协作">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E5%85%B3%E7%B3%BB%E5%9B%BE.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/10/11/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%80%EF%BC%89%E4%BB%8E%E7%A8%8B%E5%BA%8F%E5%91%98%E5%88%B0%E9%A1%B9%E7%9B%AE%E8%B4%9F%E8%B4%A3%E4%BA%BA%E2%80%94%E2%80%94%E8%A7%92%E8%89%B2%E8%BD%AC%E6%8D%A2%E4%B8%8E%E7%9F%A5%E8%AF%86%E6%A1%86%E6%9E%B6/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>项目管理（一）从程序员到项目负责人——角色转换与知识框架 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/10/11/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%80%EF%BC%89%E4%BB%8E%E7%A8%8B%E5%BA%8F%E5%91%98%E5%88%B0%E9%A1%B9%E7%9B%AE%E8%B4%9F%E8%B4%A3%E4%BA%BA%E2%80%94%E2%80%94%E8%A7%92%E8%89%B2%E8%BD%AC%E6%8D%A2%E4%B8%8E%E7%9F%A5%E8%AF%86%E6%A1%86%E6%9E%B6/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          项目管理（一）从程序员到项目负责人——角色转换与知识框架
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-10-11 22:41:05" itemprop="dateCreated datePublished" datetime="2023-10-11T22:41:05+08:00">2023-10-11</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86/" itemprop="url" rel="index"><span itemprop="name">项目管理</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.2k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>技术做得好，就会被推去带项目，这是很多工程师职业路径上的第一个分岔口。推过去之后，日常工作却换了一套逻辑：以前把代码写完就算交付，现在进度、质量、跨部门配合都要你来兜底；以前产出握在自己手里，现在几乎全部依赖别人。这道能力落差，多写几行代码补不上，它首先需要一次角色认知的切换，以及一张能鸟瞰全局的知识地图。</p>
+<p>这一部分要处理的就是这两件事：从「管好自己的事」到「通过别人拿结果」，容易踩哪些坑；以及项目管理这门学科用一套什么框架，把琐碎的协调工作安放到确定的位置上。</p>
+<p>后面三篇按项目实际推进的顺序展开。</p>
+<ul>
+<li>项目管理（一）从程序员到项目负责人——角色转换与知识框架</li>
+<li>项目管理（二）五大过程组——从启动到收尾</li>
+<li>项目管理（三）变更、风险、质量与会议</li>
+<li>项目管理（四）非职权沟通——向上、跨部门与向下</li>
+</ul>
+<span id="more"></span>
+
+<h2 id="管事与管人的分界"><a href="#管事与管人的分界" class="headerlink" title="管事与管人的分界"></a>管事与管人的分界</h2><p>技术岗的产出是自己敲出来的，可控程度很高。带项目之后，交付依赖的是一组人，最本能的反应往往变成：谁做得慢，自己冲上去替他做完。这在短期看是解围，长期看是团队能力的空心化——事情全都压在一个人身上，别人始终没有机会长起来。</p>
+<p>这里有个更本质的变化：项目经理的产出要通过影响他人产生。影响一个人做成一件事，可以分成三个递进的层次：让他知道要做（Awareness）、让他有动力做（Desire）、让他有能力做（Ability）。</p>
+<p>拿贯穿这个系列的结算台改造项目来说。这是一个 10 人团队、16 周工期、跨财务&#x2F;风控&#x2F;客服三个部门的项目，上线窗口卡在大促前两周。假设风控接口的联调一直拖着，项目负责人如果只是把「周三前联调完成」的通知发到群里，那停留在第一个层次——团队知道了，但未必理解为什么是周三。更有效的做法是讲清楚：大促前两周是死窗口，风控规则一旦晚上线，结算就会带着未经核验的规则跑，出问题没有回滚余地。把原因说透，团队才可能自己想办法把联调排到前面。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E5%85%B3%E7%B3%BB%E5%9B%BE.png" alt="十大领域之间的关系"></p>
+<p>动力之后还有能力。如果整个团队当下就没有做风控联调的经验，那么这件事就是关键路径上的能力缺口，应当按最高优先级的风险来处理：短期从外部借一个做过的人，或者申请兄弟团队短期支援；长期把团队里最有潜力的人排进这类任务，配上辅导。授权要连同方法、理由和合适的人选一起交出去。</p>
+<h2 id="三个误区的共同根因"><a href="#三个误区的共同根因" class="headerlink" title="三个误区的共同根因"></a>三个误区的共同根因</h2><p>除了事必躬亲，新任项目负责人还容易掉进另外两个坑：一个是追在每个人后面盯进度，把自己活成监工；一个是刚学到一套新方法，看哪里都想改造一遍。</p>
+<p>这三个误区看着各说各的，根子其实是一个：用管事的方式去管人。事可以直接动手、可以逐条核对，人只能靠目标和机制驱动。</p>
+<p>监工式管理的代价很直接。项目负责人越是逐个环节去催，团队越把「催一下动一下」当成默认节奏；他本人陷在琐碎里，没有精力去做真正该做的事——明确愿景、定义里程碑、建立规则。更有效的替代是建立机制：开启动会把目标和完成标准讲清楚，定义阶段里程碑，建立上下游协同流程，把站会、周报固定成制度。进展和风险通过这些渠道自动汇聚，靠规则即可达到监控目的，省去人盯。等秩序跑起来了，负责人才腾得出手做愿景驱动和激励。</p>
+<p>至于拿到锤子看什么都像钉子，根源是忽略了每个项目现有做法都有自己的成因。站会、电子看板本身都是好工具，引入时机不对、方式生硬，团队只会产生抵触。动手前值得先问几件事：这个项目里时间、成本、质量、范围，哪个是硬约束？团队真正的痛点在哪，哪些是眼下最迫切的？团队自己有没有改进的愿望，迫切到什么程度？发起人对项目和你本人的定位是什么，改进思路有没有和他对齐？新工具更适合自上而下推，还是找一个痛点先试点？</p>
+<p>结算台改造的答案是：时间是第一要素，拖一天就是真金白银的损失；最大的痛点是需求频繁变更且缺乏管理。把「变更管理」当作第一个切入口，比一上来就全面推行站会、看板更容易拿到可见的效果，也更容易建立信任。改一件事，站稳了，再改下一件。</p>
+<h2 id="十大领域一张网"><a href="#十大领域一张网" class="headerlink" title="十大领域一张网"></a>十大领域一张网</h2><p>从管事切换到管人，靠的是经验和分寸；但要让这种分寸有章可循，还需要一张知识地图。项目管理作为一门学科，体系庞杂——单是 PMI 这套标准就划分出十大知识领域、五大过程组，共 49 个子过程。初学的人容易陷进去。真正有用的，是先记住那张鸟瞰图。</p>
+<p>十大知识领域回答的是「项目管理要管哪些方面」：整合、范围、时间、成本、质量、人力资源、沟通、干系人、风险、采购。它们并非平级——进度、成本、质量、范围是最核心的四个，风险、沟通、采购、资源、干系人是辅助领域，整合管理则是把全局串起来的那一个。</p>
+<p>理解了这张网，面对一件陌生任务也能快速扫一遍：哪些人会受影响（干系人），到底要做到什么程度（范围），时间花在哪（进度），代价多大（成本），做到什么算合格（质量），谁来干（资源），信息怎么同步（沟通），哪里可能出岔子（风险），有没有东西要外部采购（采购），以及所有这一切怎么统筹取舍（整合）。结算台改造立项时，用这十个角度过一遍，往往就能发现被漏掉的干系方或者没定义清楚的完成标准。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E4%BA%94%E5%A4%A7%E8%BF%87%E7%A8%8B%E7%BB%84%E7%9F%A9%E9%98%B5.jpg" alt="十大领域与五大过程组一横一纵矩阵"></p>
+<h2 id="五大过程组一条线"><a href="#五大过程组一条线" class="headerlink" title="五大过程组一条线"></a>五大过程组一条线</h2><p>如果说十大领域是横向的一张网，五大过程组就是纵向的一条时间线。它脱胎于质量管理的戴明环（PDCA：规划、执行、检查、行动），PMI 据此把项目管理活动分成启动、规划、执行、监控、收尾五组。</p>
+<p>启动要回答「这个项目为什么存在」：识别干系人、制定项目章程，并通过启动会公开确认。这个环节最容易被结果导向的人跳过，代价是后面每个人都在完成一条条任务，却没人说得清这些任务服务于什么目标。跨部门项目尤其需要启动会，最好请更高层出面讲清背景和重要性——这既是统一认知，也是项目负责人获得公开授权的机会。</p>
+<p>规划把愿景翻译成可落地的路线：明确范围、定义里程碑、拆解到具体版本和工作项。它是渐进明晰的，近期细、远期粗，随着信息增加不断细化。执行是按计划把事情做出来；监控则在过程里不断比对实际与计划的偏差，发现偏离就纠正。收尾最容易被虎头蛇尾地略过，但它包含交付成果和组织复盘——项目无论成功、失败还是中途被叫停，都值得趁热把经验沉淀下来。</p>
+<p>这里有个现实问题：互联网项目常常研发期和运营期交织，需求像海浪一样一波未平一波又起，很难找到清晰的启动和收尾。经典方法依然通用，只是要落到与你项目匹配的颗粒度上，找到属于那个层级的 PDCA 闭环。一个大版本是一轮，一个小迭代也可以是一轮。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-01-%E5%8D%81%E4%BA%8C%E5%AD%97%E8%81%8C%E8%B4%A3%E7%BA%B2%E9%A2%86.png" alt="保目标、助决策、提效能、促协作"></p>
+<h2 id="角色与知识速查"><a href="#角色与知识速查" class="headerlink" title="角色与知识速查"></a>角色与知识速查</h2><p>把角色转换和知识框架放在一起看，可以收敛成下面这张表。它既是自检清单，也标出了常见做法的代价。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>技术岗惯性</th>
+<th>项目负责人需要</th>
+<th>常见代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>产出方式</td>
+<td>自己把事做完</td>
+<td>让人知道、有动力、有能力去做</td>
+<td>事必躬亲，团队能力空心化</td>
+</tr>
+<tr>
+<td>推进手段</td>
+<td>逐个盯、逐个催</td>
+<td>定目标、建机制、让机制运转</td>
+<td>把自己做成监工，秩序建立不起来</td>
+</tr>
+<tr>
+<td>引入方法</td>
+<td>看到好工具就上</td>
+<td>先对齐痛点与干系人，找切口试点</td>
+<td>生硬推广，团队抵触</td>
+</tr>
+<tr>
+<td>思考框架</td>
+<td>就事论事</td>
+<td>十大领域扫一遍，五大过程组走一遍</td>
+<td>漏掉干系方或没定义完成标准</td>
+</tr>
+</tbody></table>
+<p>项目管理的职责常概括为十二个字：保目标、助决策、提效能、促协作。前两项形成围绕目标的闭环，把组织战略一层层拆到每个人每天的执行；后两项让协作更顺、效能更高。这十二个字的生效与头衔关系不大——大多数项目负责人并没有对团队的直接管辖权，落到实处靠的是后面几篇要展开的方法与沟通。</p>
+<table>
+<thead>
+<tr>
+<th>速查项</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>影响三层次</td>
+<td>知道要做 → 有动力做 → 有能力做，缺一层都可能落空</td>
+</tr>
+<tr>
+<td>三大误区</td>
+<td>事必躬亲 &#x2F; 追着做监工 &#x2F; 拿锤子找钉子</td>
+</tr>
+<tr>
+<td>十大领域</td>
+<td>4 核心（范围、时间、成本、质量）＋5 辅助＋1 整合</td>
+</tr>
+<tr>
+<td>五大过程组</td>
+<td>启动 → 规划 → 执行 → 监控 → 收尾，对应 PDCA</td>
+</tr>
+<tr>
+<td>落地提醒</td>
+<td>互联网项目按匹配颗粒度找闭环，不必强求大周期</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>从技术岗转做项目负责人，难点在思维与习惯的切换：把产出从「自己做完」改成「让别人做成」，把推进从「盯着人」改成「靠机制」。工具和方法可以后天学，真正见功夫的是判断什么情境该用什么方法。十大领域给出思考的横向地图，五大过程组给出推进的纵向节奏，两者合起来，恰好可以安放前面那三个误区暴露出的所有问题。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《项目管理实战20讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/10/11/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%80%EF%BC%89%E4%BB%8E%E7%A8%8B%E5%BA%8F%E5%91%98%E5%88%B0%E9%A1%B9%E7%9B%AE%E8%B4%9F%E8%B4%A3%E4%BA%BA%E2%80%94%E2%80%94%E8%A7%92%E8%89%B2%E8%BD%AC%E6%8D%A2%E4%B8%8E%E7%9F%A5%E8%AF%86%E6%A1%86%E6%9E%B6/" title="项目管理（一）从程序员到项目负责人——角色转换与知识框架">https://xssdpgy.github.io/2023/10/11/项目管理（一）从程序员到项目负责人——角色转换与知识框架/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86/" rel="tag"># 项目管理</a>
+              <a href="/tags/%E5%9B%A2%E9%98%9F%E5%8D%8F%E4%BD%9C/" rel="tag"># 团队协作</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/09/29/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%E5%9B%9B%EF%BC%89%E7%9B%91%E6%8E%A7%E4%BD%93%E7%B3%BB%E4%B8%8E%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98/" rel="prev" title="Linux 性能（十四）监控体系与综合实战">
+      <i class="fa fa-chevron-left"></i> Linux 性能（十四）监控体系与综合实战
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/10/31/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%94%E5%A4%A7%E8%BF%87%E7%A8%8B%E7%BB%84%E2%80%94%E2%80%94%E4%BB%8E%E5%90%AF%E5%8A%A8%E5%88%B0%E6%94%B6%E5%B0%BE/" rel="next" title="项目管理（二）五大过程组——从启动到收尾">
+      项目管理（二）五大过程组——从启动到收尾 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%AE%A1%E4%BA%8B%E4%B8%8E%E7%AE%A1%E4%BA%BA%E7%9A%84%E5%88%86%E7%95%8C"><span class="nav-text">管事与管人的分界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%89%E4%B8%AA%E8%AF%AF%E5%8C%BA%E7%9A%84%E5%85%B1%E5%90%8C%E6%A0%B9%E5%9B%A0"><span class="nav-text">三个误区的共同根因</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8D%81%E5%A4%A7%E9%A2%86%E5%9F%9F%E4%B8%80%E5%BC%A0%E7%BD%91"><span class="nav-text">十大领域一张网</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BA%94%E5%A4%A7%E8%BF%87%E7%A8%8B%E7%BB%84%E4%B8%80%E6%9D%A1%E7%BA%BF"><span class="nav-text">五大过程组一条线</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A7%92%E8%89%B2%E4%B8%8E%E7%9F%A5%E8%AF%86%E9%80%9F%E6%9F%A5"><span class="nav-text">角色与知识速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">49</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">6</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">48</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'ce2af0542b7e703239265f0452ae2863',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -197,6 +197,374 @@
   
   
   <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/07/05/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%EF%BC%89%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E3%80%81%E5%8E%8B%E6%B5%8B%E4%B8%8E%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          
+            <a href="/2023/07/05/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%EF%BC%89%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E3%80%81%E5%8E%8B%E6%B5%8B%E4%B8%8E%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86/" class="post-title-link" itemprop="url">高并发（十）可观测性、压测与配置管理</a>
+        </h2>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-07-05 21:57:13" itemprop="dateCreated datePublished" datetime="2023-07-05T21:57:13+08:00">2023-07-05</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>7.3k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>监控指标按主机、组件、应用、业务四层收，报警要指向一个具体动作——报表再全，值班的人分不清该扩容还是该回滚，等于没监控。全链路压测的门槛也不在压测工具，而在流量隔离与数据污染。先看一个常见的场景：2 万 QPS 的压测流量打到线上，5000 件库存被压测订单扣成负数，真实用户无货可抢；活动开关和限流阈值要能灰度下发、能回滚，改一次阈值不该逼着应用重启。</p>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="/2023/07/05/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%8D%81%EF%BC%89%E5%8F%AF%E8%A7%82%E6%B5%8B%E6%80%A7%E3%80%81%E5%8E%8B%E6%B5%8B%E4%B8%8E%E9%85%8D%E7%BD%AE%E7%AE%A1%E7%90%86/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+        <div class="post-eof"></div>
+      </footer>
+  </article>
+  
+  
+  
+
+      
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          
+            <a href="/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/" class="post-title-link" itemprop="url">高并发（九）服务治理与流量入口设计</a>
+        </h2>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-26 10:43:43" itemprop="dateCreated datePublished" datetime="2023-06-26T10:43:43+08:00">2023-06-26</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>流量入口这几层各有各的活。负载均衡负责分发，鉴权与限流归网关；慢请求靠 Trace 还原，多机房先定数据写在哪、往哪同步；把治理逻辑挪出业务进程，是 ServiceMesh 的事。一个组件不该全背。先看一个常见情况：秒杀整点 2 万 QPS 打到入口，有人把鉴权、库存预检、订单参数校验全塞进网关，网关一升级全站不可用，业务改个字段还得跟着发版。横切逻辑放网关、业务语义留应用，各层才扩得动。</p>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="/2023/06/26/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B9%9D%EF%BC%89%E6%9C%8D%E5%8A%A1%E6%B2%BB%E7%90%86%E4%B8%8E%E6%B5%81%E9%87%8F%E5%85%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+        <div class="post-eof"></div>
+      </footer>
+  </article>
+  
+  
+  
+
+      
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          
+            <a href="/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/" class="post-title-link" itemprop="url">高并发（八）服务化拆分与 RPC 调用链</a>
+        </h2>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-22 20:48:00" itemprop="dateCreated datePublished" datetime="2023-06-22T20:48:00+08:00">2023-06-22</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>7.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>7 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>服务化拆不拆，看团队规模和变更频率，不看 QPS 高低。先看一个常见情况：一个电商后台六个人维护一个工程，改一行逻辑十分钟上线；扩到四十人、分成订单、库存、支付几组还往同一个库提交，一次库存改动要全组回归，上线拖到半天。这才是拆的信号，与 QPS 无关。流量到两万 QPS 却只有一个小组、代码一周动一次，加机器更划算。拆开之后，网络、序列化、超时、寻址四笔成本到账。</p>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="/2023/06/22/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AB%EF%BC%89%E6%9C%8D%E5%8A%A1%E5%8C%96%E6%8B%86%E5%88%86%E4%B8%8E%20RPC%20%E8%B0%83%E7%94%A8%E9%93%BE/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+        <div class="post-eof"></div>
+      </footer>
+  </article>
+  
+  
+  
+
+      
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          
+            <a href="/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/" class="post-title-link" itemprop="url">高并发（七）消息队列削峰与投递语义</a>
+        </h2>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-06-13 22:23:25" itemprop="dateCreated datePublished" datetime="2023-06-13T22:23:25+08:00">2023-06-13</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
+                </span>
+                  ，
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.4k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>2 万 TPS 的订单同步写进数据库不成立，队列的作用不是提速，是按数据库能承受的速率把请求排起来。比如单 SKU、库存 5000 件、30 万人预约，整点开抢那几秒下单请求堆到 2 万 TPS，而库只吃得下 2000 TPS。把 30 万个请求全塞进队列同样错，注定失败的该在入口就挡掉，只有抢得到资格的请求才值得排队。</p>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="/2023/06/13/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%83%EF%BC%89%E6%B6%88%E6%81%AF%E9%98%9F%E5%88%97%E5%89%8A%E5%B3%B0%E4%B8%8E%E6%8A%95%E9%80%92%E8%AF%AD%E4%B9%89/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+      <footer class="post-footer">
+        <div class="post-eof"></div>
+      </footer>
+  </article>
+  
+  
+  
+
+      
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
     <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/06/07/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E5%85%AD%EF%BC%89%E7%BC%93%E5%AD%98%E9%AB%98%E5%8F%AF%E7%94%A8%E3%80%81%E7%A9%BF%E9%80%8F%E9%98%B2%E6%8A%A4%E4%B8%8E%E9%9D%99%E6%80%81%E5%8A%A0%E9%80%9F/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -744,398 +1112,6 @@
   
   
 
-      
-  
-  
-  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/04/24/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%80%EF%BC%89%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E7%9B%AE%E6%A0%87%E4%B8%8E%E5%AE%B9%E9%87%8F%E5%BA%A6%E9%87%8F/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="Zang JinFeng">
-      <meta itemprop="description" content="Stay hungry, Stay foolish.">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="雪山上的蒲公英">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          
-            <a href="/2023/04/24/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%80%EF%BC%89%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E7%9B%AE%E6%A0%87%E4%B8%8E%E5%AE%B9%E9%87%8F%E5%BA%A6%E9%87%8F/" class="post-title-link" itemprop="url">高并发（一）系统设计目标与容量度量</a>
-        </h2>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-calendar"></i>
-              </span>
-              <span class="post-meta-item-text">发表于</span>
-
-              <time title="创建时间：2023-04-24 22:47:05" itemprop="dateCreated datePublished" datetime="2023-04-24T22:47:05+08:00">2023-04-24</time>
-            </span>
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-folder"></i>
-              </span>
-              <span class="post-meta-item-text">分类于</span>
-                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
-                </span>
-                  ，
-                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-                  <a href="/categories/%E9%AB%98%E5%B9%B6%E5%8F%91/" itemprop="url" rel="index"><span itemprop="name">高并发</span></a>
-                </span>
-            </span>
-
-          <br>
-            <span class="post-meta-item" title="本文字数">
-              <span class="post-meta-item-icon">
-                <i class="far fa-file-word"></i>
-              </span>
-                <span class="post-meta-item-text">本文字数：</span>
-              <span>7.6k</span>
-            </span>
-            <span class="post-meta-item" title="阅读时长">
-              <span class="post-meta-item-icon">
-                <i class="far fa-clock"></i>
-              </span>
-                <span class="post-meta-item-text">阅读时长 &asymp;</span>
-              <span>7 分钟</span>
-            </span>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>先看一个常见的秒杀需求：单 SKU，库存 5000 件，预约三十万人，整点开抢。运营给的口径往往就这一句，剩下的要技术侧自己补——峰值多少 QPS、每一层能扛多少、瓶颈在哪一层。常见的讨论是从「加多少台机器」开始的：网关加几台、应用加几台，数据库不动。问题不在加少了，在于跳过了度量：峰值没算过，数据库那一层扛不扛得住就无从判断。这类活动里先出问题的通常不是网关，是被同步写入压住的订单库，响应时间从几十毫秒抬到几秒，支付回调跟着一起变慢。</p>
-<p>这组文章按十二篇来排，从度量写起，一直写到大促链路落地。案例统一用大促秒杀下的下单与履约：整点开抢、单 SKU、峰值是日常的几十到上百倍，链路还是下单、锁库存、支付、发货那一条。站点前面有十篇 DDD，那组文章关心业务边界的划分；这里只关心流量和容量，同一个业务域，名词不用重新认。</p>
-<p>顺序是从下往上排的：先量清楚再谈优化，接着是数据层、消息与服务、稳定性，最后落到两个读模型实战。面试技巧、组件源码、学习方法这些不讲。每篇给判断依据和要付的代价，配重画的图和能跑的原创代码。十二篇目录：</p>
-<ul>
-<li>高并发（一）系统设计目标与容量度量</li>
-<li>高并发（二）架构分层与高可用、易扩展设计</li>
-<li>高并发（三）池化技术与主从分离</li>
-<li>高并发（四）分库分表与全局唯一 ID</li>
-<li>高并发（五）NoSQL 与缓存读写策略</li>
-<li>高并发（六）缓存高可用、穿透防护与静态加速</li>
-<li>高并发（七）消息队列削峰与投递语义</li>
-<li>高并发（八）服务化拆分与 RPC 调用链</li>
-<li>高并发（九）服务治理与流量入口设计</li>
-<li>高并发（十）可观测性、压测与配置管理</li>
-<li>高并发（十一）降级熔断与流量控制</li>
-<li>高并发（十二）信息流系统的推拉模式取舍</li>
-</ul>
-<p>有一句得放前面：这不是一张待办清单，不用全上。流量没到拐点就分库分表、上消息队列，复杂度是实打实的，收益常常是零。后面每篇都会写明「什么情况下别这么干」。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="/2023/04/24/%E9%AB%98%E5%B9%B6%E5%8F%91%EF%BC%88%E4%B8%80%EF%BC%89%E7%B3%BB%E7%BB%9F%E8%AE%BE%E8%AE%A1%E7%9B%AE%E6%A0%87%E4%B8%8E%E5%AE%B9%E9%87%8F%E5%BA%A6%E9%87%8F/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-        <div class="post-eof"></div>
-      </footer>
-  </article>
-  
-  
-  
-
-      
-  
-  
-  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/04/11/DDD%EF%BC%88%E5%8D%81%EF%BC%89%E5%AE%9E%E8%B7%B5%E6%80%BB%E7%BB%93%E2%80%94%E2%80%94%E8%BE%B9%E7%95%8C%E3%80%81%E6%BC%94%E8%BF%9B%E7%AD%96%E7%95%A5%E4%B8%8E%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%BE%E8%AE%A1/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="Zang JinFeng">
-      <meta itemprop="description" content="Stay hungry, Stay foolish.">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="雪山上的蒲公英">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          
-            <a href="/2023/04/11/DDD%EF%BC%88%E5%8D%81%EF%BC%89%E5%AE%9E%E8%B7%B5%E6%80%BB%E7%BB%93%E2%80%94%E2%80%94%E8%BE%B9%E7%95%8C%E3%80%81%E6%BC%94%E8%BF%9B%E7%AD%96%E7%95%A5%E4%B8%8E%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%BE%E8%AE%A1/" class="post-title-link" itemprop="url">DDD（十）实践总结——边界、演进策略与分布式设计</a>
-        </h2>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-calendar"></i>
-              </span>
-              <span class="post-meta-item-text">发表于</span>
-
-              <time title="创建时间：2023-04-11 14:39:01" itemprop="dateCreated datePublished" datetime="2023-04-11T14:39:01+08:00">2023-04-11</time>
-            </span>
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-folder"></i>
-              </span>
-              <span class="post-meta-item-text">分类于</span>
-                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
-                </span>
-            </span>
-
-          <br>
-            <span class="post-meta-item" title="本文字数">
-              <span class="post-meta-item-icon">
-                <i class="far fa-file-word"></i>
-              </span>
-                <span class="post-meta-item-text">本文字数：</span>
-              <span>6.3k</span>
-            </span>
-            <span class="post-meta-item" title="阅读时长">
-              <span class="post-meta-item-icon">
-                <i class="far fa-clock"></i>
-              </span>
-                <span class="post-meta-item-text">阅读时长 &asymp;</span>
-              <span>6 分钟</span>
-            </span>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>把单体的事务写法原样搬进分布式环境，库存被扣穿只是时间问题。本篇汇总生产落地里最容易失守的几处判断，从一次超卖事故出发，给出服务化改造的固定顺序，以及分布式事务、幂等与对账的收敛手段。</p>
-<p>一次服务化上线后的大促，库存被扣穿了。原因不是流量超预估，而是一段沿用自单体的写法被原样搬进了分布式环境：</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：本地事务里套跨服务调用，超时重试无幂等</span></span><br><span class="line"><span class="meta">@Transactional</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">placeOrder</span><span class="params">(PlaceOrderCmd cmd)</span> &#123;</span><br><span class="line">    orderMapper.insert(toPO(cmd));                       <span class="comment">// 本地事务内写订单</span></span><br><span class="line">    stockClient.deduct(cmd.getSkuId(), cmd.getQty());   <span class="comment">// RPC，超时即重试</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>网络抖动时这条链路分裂成两种不一致：订单写成功、扣减请求超时后重试，库存被扣两次；或者扣减成功、订单事务随后回滚，库存被永久占用。事后团队想用分布式事务框架兜底，把全局事务套在这条长链路上，大促时全局锁又把数据库拖垮。</p>
-<p>这类事故的根因不在选了哪个事务框架，而在三件事从未被定清楚：哪些数据必须同生共死，也就是边界；老代码按什么路径退出，也就是演进策略；跨边界失败后如何收敛，也就是分布式设计。三者缺一，补偿任务、对账脚本和半夜告警就会变成常态。</p>
-<p>分布式系统里的一致性，不是靠一个框架兜底，而是先把边界划对，再为跨边界的失败设计一条确定的收敛路径。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="/2023/04/11/DDD%EF%BC%88%E5%8D%81%EF%BC%89%E5%AE%9E%E8%B7%B5%E6%80%BB%E7%BB%93%E2%80%94%E2%80%94%E8%BE%B9%E7%95%8C%E3%80%81%E6%BC%94%E8%BF%9B%E7%AD%96%E7%95%A5%E4%B8%8E%E5%88%86%E5%B8%83%E5%BC%8F%E8%AE%BE%E8%AE%A1/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-        <div class="post-eof"></div>
-      </footer>
-  </article>
-  
-  
-  
-
-      
-  
-  
-  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/04/04/DDD%EF%BC%88%E4%B9%9D%EF%BC%89%E8%AE%BE%E8%AE%A1%E5%AE%9E%E4%BE%8B%E2%80%94%E2%80%94%E4%BB%8E%E4%BA%8B%E4%BB%B6%E9%A3%8E%E6%9A%B4%E5%88%B0%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%90%BD%E5%9C%B0/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="Zang JinFeng">
-      <meta itemprop="description" content="Stay hungry, Stay foolish.">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="雪山上的蒲公英">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          
-            <a href="/2023/04/04/DDD%EF%BC%88%E4%B9%9D%EF%BC%89%E8%AE%BE%E8%AE%A1%E5%AE%9E%E4%BE%8B%E2%80%94%E2%80%94%E4%BB%8E%E4%BA%8B%E4%BB%B6%E9%A3%8E%E6%9A%B4%E5%88%B0%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%90%BD%E5%9C%B0/" class="post-title-link" itemprop="url">DDD（九）设计实例——从事件风暴到微服务落地</a>
-        </h2>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-calendar"></i>
-              </span>
-              <span class="post-meta-item-text">发表于</span>
-
-              <time title="创建时间：2023-04-04 09:29:49" itemprop="dateCreated datePublished" datetime="2023-04-04T09:29:49+08:00">2023-04-04</time>
-            </span>
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-folder"></i>
-              </span>
-              <span class="post-meta-item-text">分类于</span>
-                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
-                </span>
-            </span>
-
-          <br>
-            <span class="post-meta-item" title="本文字数">
-              <span class="post-meta-item-icon">
-                <i class="far fa-file-word"></i>
-              </span>
-                <span class="post-meta-item-text">本文字数：</span>
-              <span>8.5k</span>
-            </span>
-            <span class="post-meta-item" title="阅读时长">
-              <span class="post-meta-item-icon">
-                <i class="far fa-clock"></i>
-              </span>
-                <span class="post-meta-item-text">阅读时长 &asymp;</span>
-              <span>8 分钟</span>
-            </span>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>服务清单靠拍脑袋定，异步链路里迟早会出现没人认领的状态。本篇把电商订单履约从头走一遍：从事件风暴贴出的命令、事件与聚合出发，收敛成带数据归属的服务清单，最后落到聚合根代码和目录。</p>
-<p>大促当天出现一批「支付成功却未发货」的订单，客服只能手工补单。根因不是消息丢了，而是没人定义过「支付已完成」这个事件。</p>
-<p>当时团队拿到 PRD 就按名词拆了四个服务：订单、库存、支付、发货。交易侧认为「支付成功即订单完成」，履约侧认为「仓库出库才算完成」，库存侧把「锁定成功」记作占用。三个状态机各说各话，异步链路里缺一个明确的事件契约，发货单永远等不到触发条件。最后靠一个定时任务扫库兜底：</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：没有事件契约，靠扫表猜状态驱动发货</span></span><br><span class="line"><span class="meta">@Scheduled(fixedDelay = 60000)</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">compensateShipment</span><span class="params">()</span> &#123;</span><br><span class="line">    List&lt;OrderPO&gt; paid = orderMapper.selectByStatus(<span class="string">&quot;PAID&quot;</span>);</span><br><span class="line">    <span class="keyword">for</span> (OrderPO o : paid) &#123;</span><br><span class="line">        <span class="keyword">if</span> (shipmentMapper.countByOrderId(o.getId()) == <span class="number">0</span>) &#123;</span><br><span class="line">            shipmentClient.create(o.getId());   <span class="comment">// 无幂等键，重跑即重复发货</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>状态用字符串硬编码、跨服务直接读对方的表、重试没有幂等键，任何一处都能单独引发故障。但这些都是症状。真正的缺口在更早的一步：动手拆分之前，没有把「业务里究竟发生了哪些事、由谁触发、谁该响应」一次性摆到台面上对齐。</p>
-<p>服务清单不是架构师拍出来的，是业务事实收敛出来的。下面把电商订单履约——下单、锁库存、支付、发货——从头走一遍，一直走到代码目录。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="/2023/04/04/DDD%EF%BC%88%E4%B9%9D%EF%BC%89%E8%AE%BE%E8%AE%A1%E5%AE%9E%E4%BE%8B%E2%80%94%E2%80%94%E4%BB%8E%E4%BA%8B%E4%BB%B6%E9%A3%8E%E6%9A%B4%E5%88%B0%E5%BE%AE%E6%9C%8D%E5%8A%A1%E8%90%BD%E5%9C%B0/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-        <div class="post-eof"></div>
-      </footer>
-  </article>
-  
-  
-  
-
-      
-  
-  
-  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/04/02/DDD%EF%BC%88%E5%85%AB%EF%BC%89%E4%BB%A3%E7%A0%81%E6%A8%A1%E5%9E%8B%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E5%AF%B9%E8%B1%A1%E4%B8%8E%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E6%98%A0%E5%B0%84/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="Zang JinFeng">
-      <meta itemprop="description" content="Stay hungry, Stay foolish.">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="雪山上的蒲公英">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          
-            <a href="/2023/04/02/DDD%EF%BC%88%E5%85%AB%EF%BC%89%E4%BB%A3%E7%A0%81%E6%A8%A1%E5%9E%8B%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E5%AF%B9%E8%B1%A1%E4%B8%8E%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E6%98%A0%E5%B0%84/" class="post-title-link" itemprop="url">DDD（八）代码模型——领域对象与目录结构映射</a>
-        </h2>
-
-        <div class="post-meta">
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-calendar"></i>
-              </span>
-              <span class="post-meta-item-text">发表于</span>
-
-              <time title="创建时间：2023-04-02 16:47:00" itemprop="dateCreated datePublished" datetime="2023-04-02T16:47:00+08:00">2023-04-02</time>
-            </span>
-            <span class="post-meta-item">
-              <span class="post-meta-item-icon">
-                <i class="far fa-folder"></i>
-              </span>
-              <span class="post-meta-item-text">分类于</span>
-                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-                  <a href="/categories/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" itemprop="url" rel="index"><span itemprop="name">架构设计</span></a>
-                </span>
-            </span>
-
-          <br>
-            <span class="post-meta-item" title="本文字数">
-              <span class="post-meta-item-icon">
-                <i class="far fa-file-word"></i>
-              </span>
-                <span class="post-meta-item-text">本文字数：</span>
-              <span>10k</span>
-            </span>
-            <span class="post-meta-item" title="阅读时长">
-              <span class="post-meta-item-icon">
-                <i class="far fa-clock"></i>
-              </span>
-                <span class="post-meta-item-text">阅读时长 &asymp;</span>
-              <span>9 分钟</span>
-            </span>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-
-      
-          <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>一个类同时当实体、接口出参和业务计算载体，迟早会在某个 getter 上出事。本篇讲领域模型到代码目录的映射：DO、DTO、PO 与 Entity 各管什么，转换放在哪一层，以及怎样让领域层不依赖框架。</p>
-<p>财务对账发现某日全部订单金额缩小了一百倍，最后定位到一行 getter。</p>
-<p>某电商订单服务里只有一个 <code>Order</code> 类，它同时被三处使用：作为 JPA 实体映射 <code>t_order</code> 表，作为下单接口的出参由 Jackson 序列化，又在下单流程里承担金额计算。为了让前端直接显示「元」，有人在 <code>getAmount()</code> 里加了句除法。而库里 <code>amount</code> 存的是「分」。</p>
-<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 反例：Entity、DTO 与领域对象共用一个类，getter 夹带展示逻辑</span></span><br><span class="line"><span class="meta">@Entity</span></span><br><span class="line"><span class="meta">@Table(name = &quot;t_order&quot;)</span></span><br><span class="line"><span class="keyword">public</span> <span class="keyword">class</span> <span class="title class_">Order</span> &#123;</span><br><span class="line">    <span class="meta">@Id</span></span><br><span class="line">    <span class="keyword">private</span> Long id;</span><br><span class="line">    <span class="keyword">private</span> Long amount;          <span class="comment">// 单位：分</span></span><br><span class="line">    <span class="keyword">private</span> String status;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">public</span> Long <span class="title function_">getAmount</span><span class="params">()</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> amount / <span class="number">100</span>;      <span class="comment">// 为出参改成「元」，同时污染了持久化与计算</span></span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">public</span> <span class="keyword">void</span> <span class="title function_">setAmount</span><span class="params">(Long amount)</span> &#123; <span class="built_in">this</span>.amount = amount; &#125;</span><br><span class="line">    <span class="comment">// 省略其余 getter/setter</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>Jackson 序列化出参时调它，Hibernate 脏检查与持久化也调它，内部运算还调它。一个 getter 服务三种用途，任何改法都会波及另外两种。</p>
-<p>根因不是这行除法，而是这个类没有确定的身份：它既是数据库表的镜像，又是网络传输的载体，还是业务规则的宿主。三者对「金额」的语义本就不同——库里是分、接口是元、领域里是带币种的值对象——却被压进同一个字段。类似的事故还有另一种形态：领域对象上打满 <code>@Entity</code>、<code>@Table</code>、<code>@JsonProperty</code>，换 ORM、加缓存、发消息时，每动一处都要改业务类。</p>
-<p>代码模型要解决的正是这件事：让领域对象拥有独立的类与独立的目录，并规定谁、在哪一层、把它翻译成别的对象。边界不落到目录上，分层就只是一句口号。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="/2023/04/02/DDD%EF%BC%88%E5%85%AB%EF%BC%89%E4%BB%A3%E7%A0%81%E6%A8%A1%E5%9E%8B%E2%80%94%E2%80%94%E9%A2%86%E5%9F%9F%E5%AF%B9%E8%B1%A1%E4%B8%8E%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84%E6%98%A0%E5%B0%84/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
-      
-    </div>
-
-    
-    
-    
-      <footer class="post-footer">
-        <div class="post-eof"></div>
-      </footer>
-  </article>
-  
-  
-  
-
 
   
   <nav class="pagination">
@@ -1207,20 +1183,20 @@
       <div class="site-state-item site-state-posts">
           <a href="/archives/">
         
-          <span class="site-state-item-count">45</span>
+          <span class="site-state-item-count">49</span>
           <span class="site-state-item-name">日志</span>
         </a>
       </div>
       <div class="site-state-item site-state-categories">
             <a href="/categories/">
           
-        <span class="site-state-item-count">5</span>
+        <span class="site-state-item-count">6</span>
         <span class="site-state-item-name">分类</span></a>
       </div>
       <div class="site-state-item site-state-tags">
             <a href="/tags/">
           
-        <span class="site-state-item-count">43</span>
+        <span class="site-state-item-count">48</span>
         <span class="site-state-item-name">标签</span></a>
       </div>
   </nav>

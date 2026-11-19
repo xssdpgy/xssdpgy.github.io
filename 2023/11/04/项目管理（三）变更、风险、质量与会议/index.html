@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言项目进入执行之后，真正考验人的往往是几件麻烦事接踵而来时怎么扛住，计划做得再漂亮也得经这一关：客户要改需求，风险在暗处积累，质量在赶工中被牺牲，会议把日程切得粉碎。这几件事看起来分散，处理它们的思路却相通——都要求把代价摆到台面上，用机制代替临场反应。 这一篇沿着结算台改造项目（10 人、16 周、跨三个部门、历史变更率约 30%、上线门槛为 P1 缺陷 0）往下走，看四件事：变更怎么从对抗变">
+<meta property="og:type" content="article">
+<meta property="og:title" content="项目管理（三）变更、风险、质量与会议">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/11/04/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%89%EF%BC%89%E5%8F%98%E6%9B%B4%E3%80%81%E9%A3%8E%E9%99%A9%E3%80%81%E8%B4%A8%E9%87%8F%E4%B8%8E%E4%BC%9A%E8%AE%AE/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言项目进入执行之后，真正考验人的往往是几件麻烦事接踵而来时怎么扛住，计划做得再漂亮也得经这一关：客户要改需求，风险在暗处积累，质量在赶工中被牺牲，会议把日程切得粉碎。这几件事看起来分散，处理它们的思路却相通——都要求把代价摆到台面上，用机制代替临场反应。 这一篇沿着结算台改造项目（10 人、16 周、跨三个部门、历史变更率约 30%、上线门槛为 P1 缺陷 0）往下走，看四件事：变更怎么从对抗变">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%8F%98%E6%9B%B4%E6%8E%A7%E5%88%B6%E6%B5%81%E7%A8%8B.jpg">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%8F%98%E6%9B%B4%E6%88%90%E6%9C%AC%E7%BB%9F%E8%AE%A1%E8%A1%A8.jpg">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%85%A8%E8%BF%87%E7%A8%8B%E8%B4%A8%E9%87%8F%E5%8D%A1%E7%82%B9.jpg">
+<meta property="article:published_time" content="2023-11-04T15:12:44.000Z">
+<meta property="article:modified_time" content="2023-11-04T15:12:44.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="项目管理">
+<meta property="article:tag" content="风险质量">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%8F%98%E6%9B%B4%E6%8E%A7%E5%88%B6%E6%B5%81%E7%A8%8B.jpg">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/11/04/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%89%EF%BC%89%E5%8F%98%E6%9B%B4%E3%80%81%E9%A3%8E%E9%99%A9%E3%80%81%E8%B4%A8%E9%87%8F%E4%B8%8E%E4%BC%9A%E8%AE%AE/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>项目管理（三）变更、风险、质量与会议 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/11/04/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%89%EF%BC%89%E5%8F%98%E6%9B%B4%E3%80%81%E9%A3%8E%E9%99%A9%E3%80%81%E8%B4%A8%E9%87%8F%E4%B8%8E%E4%BC%9A%E8%AE%AE/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          项目管理（三）变更、风险、质量与会议
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-11-04 23:12:44" itemprop="dateCreated datePublished" datetime="2023-11-04T23:12:44+08:00">2023-11-04</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86/" itemprop="url" rel="index"><span itemprop="name">项目管理</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.2k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>项目进入执行之后，真正考验人的往往是几件麻烦事接踵而来时怎么扛住，计划做得再漂亮也得经这一关：客户要改需求，风险在暗处积累，质量在赶工中被牺牲，会议把日程切得粉碎。这几件事看起来分散，处理它们的思路却相通——都要求把代价摆到台面上，用机制代替临场反应。</p>
+<p>这一篇沿着结算台改造项目（10 人、16 周、跨三个部门、历史变更率约 30%、上线门槛为 P1 缺陷 0）往下走，看四件事：变更怎么从对抗变成有章可循，风险怎么从冰山下浮上来，质量怎么在需求到发布的链条里层层卡点，以及会议怎么开得少而有效。</p>
+<span id="more"></span>
+
+<h2 id="变更成本与三个锦囊"><a href="#变更成本与三个锦囊" class="headerlink" title="变更成本与三个锦囊"></a>变更成本与三个锦囊</h2><p>需求变更被叫作程序员的头号噩梦，根源在于它的代价一直藏着。一句「老大要加的」就能推翻两周的工作，团队当然会把它当成对抗。改变这种局面的第一步，是把成本显性化。</p>
+<p>变更进入流程后，通常走一条固定路径：发起变更申请 → 变更委员会综合评估范围、风险、对计划的影响 → 决定是否接受 → 需要时调整计划 → 公告处理结果。委员会由产品、技术、测试的负责人和项目经理组成。流程本身简单，难的是执行。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%8F%98%E6%9B%B4%E6%8E%A7%E5%88%B6%E6%B5%81%E7%A8%8B.jpg" alt="变更控制流程"></p>
+<p>三个经过实战检验的做法可以配合使用。</p>
+<p><strong>达成最小共识。</strong> 找一次复盘会，把历次变更带来的成本增加和返工列成表，让业务负责人亲眼看到。结算台项目做这件事时，表里记着：注册环节加一个信息项，前端增加 2 人日；resize 需求返工，前端增加 5 人日、后端增加 10 人日。数字摆出来，共识就有了基础。随后趁热约法三章：所有需求和变更必须建单，无单开发有权不接；成本较大的变更要更新计划并告知全员；通过的变更由产品发邮件周知。共识可以很小——哪怕只做到「变更都记录、都公告」，也是起步。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%8F%98%E6%9B%B4%E6%88%90%E6%9C%AC%E7%BB%9F%E8%AE%A1%E8%A1%A8.jpg" alt="变更成本与计划调整统计"></p>
+<p><strong>源头治理。</strong> 变更越晚发现，代价越大。在需求稿、设计稿阶段就发动各角色做一轮全面检查，把漏洞提前暴露。时间紧的复杂项目甚至可以把产品和设计集中起来办公，把排期图、模块设计图、页面跳转图全部上墙，让开发随时贴意见——早期的一次公开透明，胜过后期无数次返工。</p>
+<p><strong>快试错。</strong> 来自老板或大客户的变更，硬顶回去往往代价更高。更有效的办法是降低试错成本：组建一个轮流值班的需求响应小分队，隔离它对主线的干扰；不认同的需求先小范围灰度，用对比数据说话。把对抗变成快速验证，对方的提法往往也会谨慎起来。</p>
+<p>这里有个判断要守住：项目追求的是达成目标，把变更清零既不现实也无必要。</p>
+<h2 id="风险清单与冰山"><a href="#风险清单与冰山" class="headerlink" title="风险清单与冰山"></a>风险清单与冰山</h2><p>风险是一种尚未发生、一旦发生就会影响项目目标的不确定事件。应对方式也不总是规避——威胁在可承受范围内、且与收益相称时，接受它本身就是合理选择。</p>
+<p>系统化的风险管理从识别开始。对照一份典型风险清单，组织团队成员和各方干系人逐个评估发生的概率和对进度、成本、范围、质量的影响，排出优先级，形成初始的风险登记册。评估可以借访谈或会议进行，让熟悉该类风险的人和外部有经验的人一起参与。影响程度的量级可以粗略分级：造成成本增加超过 40%、进度拖延超过 20% 的，属于最高级。</p>
+<p>真正棘手的，是冰山下面那些没人说的风险。团队避谈风险，通常有三个原因：没有沟通渠道、觉得说了也没用、担心被看成没能力。结算台项目里，如果负责联调的外包人员长期游离在沟通之外，等到里程碑前才暴露出关键人事变动，问题就已经晚了。</p>
+<p>识别这类风险，靠的是负责人自己的信息网络——不能只坐在办公室等上报。上到发起人、各层决策者，下到外包、实习生、短期借调人员，都要有广泛而深入的联系。一个简单有效的观察方法：看看吃饭时团队自然分成了哪几个群体，哪些是自己很少交流的，主动去补上这些空白。识别出的风险越多，项目真正面临的风险反而越低。</p>
+<p>对高概率的严重风险，要提前准备应对方案和应急预案。大促前的故障演练就是典型：针对每一种可能的线上突发状况，预先确定处理步骤、责任人、预计时长，甚至每一步的指令脚本。预案也许永远用不上，但风险降临时它的价值会凸显。风险识别也无法一次到位——每周的项目状态会上都要重新评估，并周期性审查新风险。</p>
+<h2 id="质量三道卡点"><a href="#质量三道卡点" class="headerlink" title="质量三道卡点"></a>质量三道卡点</h2><p>质量有一个容易被忽略的经济账：事前防止失败的一致性成本，和事后处理失败的非一致性成本。在一个技术债严重的团队里，抽样调研显示程序员只有约四分之一的时间在做真正产生价值的编码，超过五分之一的时间花在 Bug 修复、返工和紧急上线上。预防的成本，通常远低于检查、发现再纠正的成本。质量是规划和设计出来的，靠最后的检查补不回来。</p>
+<p>项目经理抓质量，可以从三个层面入手，结算台项目正是按这三步落的。</p>
+<table>
+<thead>
+<tr>
+<th>层面</th>
+<th>要解决的问题</th>
+<th>结算台的做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>质量规划</td>
+<td>标准定在哪</td>
+<td>规模增长期的质量标准：明确 P1 缺陷 0 才准上线，配套编码&#x2F;提交&#x2F;分支规范</td>
+</tr>
+<tr>
+<td>质量分析</td>
+<td>差距出在哪</td>
+<td>每月线上 Bug 根因分析会，按引入阶段分类，对齐千行代码 Bug 率</td>
+</tr>
+<tr>
+<td>质量控制</td>
+<td>怎么落地</td>
+<td>需求到发布全链条层层卡点，代码准入阈值不达标则无法提交测试</td>
+</tr>
+</tbody></table>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-03-%E5%85%A8%E8%BF%87%E7%A8%8B%E8%B4%A8%E9%87%8F%E5%8D%A1%E7%82%B9.jpg" alt="从需求到发布的全过程质量卡点"></p>
+<p>质量标准要随业务阶段变化。初创期追求快速迭代，质量未必是首要因素；进入规模增长期，要求就完全不同。质量规划的关键是结合项目当下的诉求定义标准，并且把编码规范、代码评审、单元测试、接口验证等手段与这个标准匹配起来。</p>
+<p>质量分析重在追根溯源。把线上 Bug 按引入阶段分类——需求不清、设计缺陷、逻辑错误、测试遗漏、变更引发、历史遗留——统计上就能看出问题集中在哪个环节，下一步该加强需求评审还是收紧代码准入，就有据可依。</p>
+<p>质量控制则是把定下来的规范真正嵌进流程。在需求到发布的链条上层层设卡：静态扫描、单元测试、覆盖率、冲突检测、依赖版本检查，任何一项不达标就卡住，不给「差不多」留口子。卡点的强度要匹配项目要求和团队成熟度，同一个项目的不同应用也可以各有侧重。</p>
+<h2 id="会议边界与规则"><a href="#会议边界与规则" class="headerlink" title="会议边界与规则"></a>会议边界与规则</h2><p>项目负责人的大量时间花在沟通上，会议过剩的后果是会而不议——说了一堆，没有决议，没有动作。对策是断舍离：只开必要的会，会而有议、议而有决、决而有行。</p>
+<p>三类会议值得优先开好。</p>
+<p><strong>启动会。</strong> 用于新项目或新阶段的目标澄清与公开授权，按 why（背景与意义）、what（愿景与目标）、how（责任分工与合作公约）三步走。背景这一环最难讲好，也最值得请高层出面讲——它是唤起参与热情的关键。准备内容可以覆盖项目背景、目标、范围、里程碑、主要风险、组织架构、责任分工、流程机制、沟通方式、支持工具十项。</p>
+<p><strong>每日站会。</strong> 它服务的是团队自组织，负责人的监控需求并不靠它满足。开得久的站会，团队往往已经形成自我管理：自己决定开会时间，甚至轮流主持。结算台项目可以把站会定在上午十一点半，既保住完整的上午，又借午饭的动力保证效率。</p>
+<p><strong>项目周会。</strong> 用来同步状态、暴露风险、做集体决策。它和周报不同——周报面向干系人呈现全貌，周会面向团队推动问题解决。</p>
+<p>复盘会、评审会前面已经讲过，启动会、站会、周会这三类掌握住，其他会议也就有了参照。一个判断标准始终有效：这个会是否服务于项目现阶段真实的沟通需要？答不上来，就考虑砍掉。</p>
+<h2 id="变更质量速查"><a href="#变更质量速查" class="headerlink" title="变更质量速查"></a>变更质量速查</h2><table>
+<thead>
+<tr>
+<th>主题</th>
+<th>核心判断</th>
+<th>常见代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>变更</td>
+<td>代价要显性化，追求目标达成而非零变更</td>
+<td>藏着成本，团队陷入无休止对抗</td>
+</tr>
+<tr>
+<td>风险</td>
+<td>识别出的越多，实际风险越低</td>
+<td>只盯显性风险，冰山下的没人管</td>
+</tr>
+<tr>
+<td>质量</td>
+<td>预防优于检查，标准匹配业务阶段</td>
+<td>事后返工吃掉大量编码时间</td>
+</tr>
+<tr>
+<td>会议</td>
+<td>只开必要的会，会而有决议</td>
+<td>会议过剩，会而不议</td>
+</tr>
+</tbody></table>
+<table>
+<thead>
+<tr>
+<th>速查项</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>变更三锦囊</td>
+<td>最小共识 &#x2F; 源头治理 &#x2F; 快试错</td>
+</tr>
+<tr>
+<td>变更流程</td>
+<td>申请 → 委员会评估 → 决策 → 调整计划 → 公告</td>
+</tr>
+<tr>
+<td>风险管理</td>
+<td>概率×影响排序 → 风险登记册 → 应急预案 → 每周复审</td>
+</tr>
+<tr>
+<td>质量三层面</td>
+<td>规划定标准 &#x2F; 分析找根因 &#x2F; 控制设卡点</td>
+</tr>
+<tr>
+<td>会议三件套</td>
+<td>启动会（why-what-how）&#x2F; 站会（自组织）&#x2F; 周会（决策）</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>变更、风险、质量、会议，表面上各有各的方法，底下是同一个逻辑：把藏起来的代价摆到台面上，用可见的数字和可运转的机制，替代临场的情绪和反应。变更成本上墙，团队才会认真对待需求；风险渠道打通，冰山下的东西才浮得上来；质量标准前置，返工才会减少；会议做减法，决议才会出来。这几件事做到位，执行阶段的混乱就有了边界。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《项目管理实战20讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/11/04/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%89%EF%BC%89%E5%8F%98%E6%9B%B4%E3%80%81%E9%A3%8E%E9%99%A9%E3%80%81%E8%B4%A8%E9%87%8F%E4%B8%8E%E4%BC%9A%E8%AE%AE/" title="项目管理（三）变更、风险、质量与会议">https://xssdpgy.github.io/2023/11/04/项目管理（三）变更、风险、质量与会议/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86/" rel="tag"># 项目管理</a>
+              <a href="/tags/%E9%A3%8E%E9%99%A9%E8%B4%A8%E9%87%8F/" rel="tag"># 风险质量</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/10/31/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%94%E5%A4%A7%E8%BF%87%E7%A8%8B%E7%BB%84%E2%80%94%E2%80%94%E4%BB%8E%E5%90%AF%E5%8A%A8%E5%88%B0%E6%94%B6%E5%B0%BE/" rel="prev" title="项目管理（二）五大过程组——从启动到收尾">
+      <i class="fa fa-chevron-left"></i> 项目管理（二）五大过程组——从启动到收尾
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/" rel="next" title="项目管理（四）非职权沟通——向上、跨部门与向下">
+      项目管理（四）非职权沟通——向上、跨部门与向下 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%98%E6%9B%B4%E6%88%90%E6%9C%AC%E4%B8%8E%E4%B8%89%E4%B8%AA%E9%94%A6%E5%9B%8A"><span class="nav-text">变更成本与三个锦囊</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%A3%8E%E9%99%A9%E6%B8%85%E5%8D%95%E4%B8%8E%E5%86%B0%E5%B1%B1"><span class="nav-text">风险清单与冰山</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B4%A8%E9%87%8F%E4%B8%89%E9%81%93%E5%8D%A1%E7%82%B9"><span class="nav-text">质量三道卡点</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BC%9A%E8%AE%AE%E8%BE%B9%E7%95%8C%E4%B8%8E%E8%A7%84%E5%88%99"><span class="nav-text">会议边界与规则</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%98%E6%9B%B4%E8%B4%A8%E9%87%8F%E9%80%9F%E6%9F%A5"><span class="nav-text">变更质量速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">49</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">6</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">48</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'fcbf20b4f58240c62d9e82fdd6855352',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言项目负责人最常见的处境，是有责任而没有对应的权力：团队不归你管，别的部门不归你调，上级的时间还要靠争取。项目能不能推动，很大程度取决于在这种处境下能不能让人愿意配合——也就是非职权影响力。 这一篇按沟通方向展开。向上，怎么在层级压力面前把关键风险和真实诉求报上去；跨部门，怎么在「谁也不归谁管」的局面里建立协作；向下，怎么在没有管辖权时让团队认你。三个方向共用一套内核：把自己掌握的信息和判断有效">
+<meta property="og:type" content="article">
+<meta property="og:title" content="项目管理（四）非职权沟通——向上、跨部门与向下">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言项目负责人最常见的处境，是有责任而没有对应的权力：团队不归你管，别的部门不归你调，上级的时间还要靠争取。项目能不能推动，很大程度取决于在这种处境下能不能让人愿意配合——也就是非职权影响力。 这一篇按沟通方向展开。向上，怎么在层级压力面前把关键风险和真实诉求报上去；跨部门，怎么在「谁也不归谁管」的局面里建立协作；向下，怎么在没有管辖权时让团队认你。三个方向共用一套内核：把自己掌握的信息和判断有效">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-04-%E6%8B%85%E5%BD%93%E5%8A%9B%E6%A8%A1%E5%9E%8B.jpg">
+<meta property="article:published_time" content="2023-11-20T02:26:19.000Z">
+<meta property="article:modified_time" content="2023-11-20T02:26:19.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="沟通">
+<meta property="article:tag" content="团队协作">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-04-%E6%8B%85%E5%BD%93%E5%8A%9B%E6%A8%A1%E5%9E%8B.jpg">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>项目管理（四）非职权沟通——向上、跨部门与向下 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          项目管理（四）非职权沟通——向上、跨部门与向下
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-11-20 10:26:19" itemprop="dateCreated datePublished" datetime="2023-11-20T10:26:19+08:00">2023-11-20</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86/" itemprop="url" rel="index"><span itemprop="name">项目管理</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>3.2k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>3 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>项目负责人最常见的处境，是有责任而没有对应的权力：团队不归你管，别的部门不归你调，上级的时间还要靠争取。项目能不能推动，很大程度取决于在这种处境下能不能让人愿意配合——也就是非职权影响力。</p>
+<p>这一篇按沟通方向展开。向上，怎么在层级压力面前把关键风险和真实诉求报上去；跨部门，怎么在「谁也不归谁管」的局面里建立协作；向下，怎么在没有管辖权时让团队认你。三个方向共用一套内核：把自己掌握的信息和判断有效地传递给对方，换取理解与行动。结算台改造项目（10 人、跨财务&#x2F;风控&#x2F;客服三个部门）继续作为贯穿场景。</p>
+<span id="more"></span>
+
+<h2 id="向上沟通的三个误区"><a href="#向上沟通的三个误区" class="headerlink" title="向上沟通的三个误区"></a>向上沟通的三个误区</h2><p>第一个误区是所有问题自己扛。技术人员尤其容易这样——怕暴露问题显得无能，怕越级汇报被看成打小报告，怕层级差带来的心理压力。结算台项目临上线前，如果联调风险已经很高、质量门槛（P1 缺陷 0）明显达不到，负责人却因为顾虑不说，结果只会把可控的风险拖成事故。影响稳定性的问题早就超出可以自己扛的级别，让上级知晓是职责所在。真到紧急关头，直接打电话或当面敲门，比在门口绕两圈更有效。</p>
+<p>第二个误区是跟着团队一起吐槽、只会抱怨不会争取。团队和管理层关系紧张时，负责人容易变成「夹心饼」：脏活累活自己扛，两头埋怨。破局点是把自己从夹心饼变成连接器——高层得到的一线信息往往相当有限，把团队真实的动态和困难及时传上去、争取必要的支持，才能真正帮到团队。</p>
+<p>第三个误区是抓不住重点、给不出方案。反映问题时只说「加班严重」「进度没更新」，高层很难重视，甚至反感。有效的做法是三件事：从对方的核心关注点切入（比如线上质量），摆出事实和数据（连续加班记录、质量风险），再给出一个近在眼前的小行动（请上级在复盘会上讲两句话）。不必一次给出完整方案，但别把问题原样甩给领导。</p>
+<p>向上沟通有个隐藏要求：即使经验阅历有差距，也不要一味附和。高层同样存在信息盲区，项目负责人应当做他的「镜子」，把看到的事实如实呈现出来——这正是前面那些动作能成立的前提。</p>
+<h2 id="跨部门约法三章"><a href="#跨部门约法三章" class="headerlink" title="跨部门约法三章"></a>跨部门约法三章</h2><p>跨部门协作难在边界。部门墙一立，沟通复杂度直线上升。应对方式取决于合作性质，可以先看「约法三章」这一套，它适合单向依赖、一次性或边界清晰的合作。</p>
+<p>三步走。<strong>建立君子协定</strong>：合作前用邮件明确目标、事项、双方需求与责任、时间进度、风险及责任人，由双方负责人公开确认；必要时开跨部门启动会，请双方领导出席——承诺越公开，约束力越强。<strong>建立机制</strong>：签完约定不能就算完，要有固定的碰头会和信息共享渠道，用任务管理工具统一流程，并定期自检有没有「三不管」地带，每个依赖任务的职责是否落到具体的人。<strong>解决问题</strong>：对方的任务真出了问题，先自己摸清状况、启动风险应对，把问题和决议抄送双方负责人；「找领导」这张牌是王炸，留到涉及 KPI、考核这类根本机制问题时再打——那种情况下需要双方领导一起调整利益捆绑，靠项目经理协调不动。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86-04-%E6%8B%85%E5%BD%93%E5%8A%9B%E6%A8%A1%E5%9E%8B.jpg" alt="跨部门沟通的担当力模型"></p>
+<p>当合作变成长期共生、彼此互为上下游时，约法三章就不够用了。这时候需要「打开边界，一起想办法」：先建立统一的交付节奏——结算台项目涉及的财务、风控、客服三方，可以约定每月固定的几个发布窗口，按依赖关系把各方排在不同窗口，彼此就有了稳定的预期；再主动往前一步，把对方当成自己人。</p>
+<p>担当力模型描述了面对跨部门问题的四种心态，一层比一层往前：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>心态</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>放弃</td>
+<td>反正绝望了</td>
+<td>什么都没做</td>
+</tr>
+<tr>
+<td>责怪</td>
+<td>你怎么又这样</td>
+<td>依然什么都没做</td>
+</tr>
+<tr>
+<td>完成任务</td>
+<td>下次盯紧你</td>
+<td>排查问题、加强监控</td>
+</tr>
+<tr>
+<td>担当</td>
+<td>不能再犯同一个错</td>
+<td>帮对方一起改进</td>
+</tr>
+</tbody></table>
+<p>真正的担当是「上敬老、下爱小」：对用户方主动深挖需求、走到他前面；对依赖方全面监控、必要容错、帮他改进。每个模块都往前一步，整体才会改善——只盯着别人的问题、捂住自己的问题，再多几个项目经理也无济于事。</p>
+<h2 id="向下沟通与六力"><a href="#向下沟通与六力" class="headerlink" title="向下沟通与六力"></a>向下沟通与六力</h2><p>没有管辖权却要让团队配合，靠的是非职权领导力。六力模型是六个递进的层次，前三层偏向「修炼自己」，后三层偏向「影响他人」。</p>
+<table>
+<thead>
+<tr>
+<th>力</th>
+<th>内核</th>
+<th>结算台项目的落点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>执行力</td>
+<td>主动担责、有始有终</td>
+<td>发起的改进活动要有 Close 动作，中途调整也要交代</td>
+</tr>
+<tr>
+<td>信息力</td>
+<td>成为信息交换中心</td>
+<td>周会、周报、邮件、群聊把信息汇聚起来</td>
+</tr>
+<tr>
+<td>感知力</td>
+<td>对冰山下的信息敏锐</td>
+<td>从现象到意图到感受，听懂冲突背后的诉求</td>
+</tr>
+<tr>
+<td>透明力</td>
+<td>把问题可视化，让集体看见</td>
+<td>需求变更率、各阶段等待时间摆上桌</td>
+</tr>
+<tr>
+<td>影响力</td>
+<td>靠倾听换来买账</td>
+<td>先理解对方的逻辑，再提建议</td>
+</tr>
+<tr>
+<td>整合力</td>
+<td>跨角色整合资源做成事</td>
+<td>主动发现风险，连接财务、风控、客服各方</td>
+</tr>
+</tbody></table>
+<p>前两层好理解。执行力俗称「靠谱」，就是跨出自己的边界主动担责，并且凡事有始有终——发起的活动中途要停，也要给大家一个交待。信息力来自职责和信息渠道的便利，用周会、站会、周报、邮件、通讯群把流动的信息汇聚起来，让非正式信息也流向自己。</p>
+<p>感知力建立在信息力之上，是对隐性信息的敏锐度，可以分三层练：现象层看行为，意图层问「为什么」，感受层体会每个人的状态和需要。团队在会上吵起来，行为只是表象；往下问会发现技术对频繁变更忍无可忍、产品背着业务指标高压——体会到这些，才知道该怎么处理。</p>
+<p>后三层开始向外发力。<strong>透明力</strong>是把观察到的问题可视化，让决策者和团队共同看见。有两条路径：走脑的「分析—思考—看见」，靠数据、事实、逻辑创造共识；走心的「目睹—感受—看见」，靠图片、视频、故事创造共鸣。想改善什么，就把什么透明化，两条路径结合效果最好。<strong>影响力</strong>的真正秘诀在「听」而不在「讲」——只有理解了对方的逻辑，建议才听得进去；练习方法是找一位成员专注听他讲五分钟，不打断、只想理解，再复述自己留意到的东西。<strong>整合力</strong>是把分离的部分连成整体，主动发现风险，跨部门跨角色地调配资源，从头到尾把事做成。</p>
+<h2 id="非职权影响力的边界"><a href="#非职权影响力的边界" class="headerlink" title="非职权影响力的边界"></a>非职权影响力的边界</h2><p>六力的顺序有讲究，它并非一套话术。执行力和信息力是根基，一个做事不靠谱、消息又不灵通的人，再会沟通也没人买账；感知力决定能不能找对发力点；透明力、影响力、整合力则是把观察到的东西变成集体行动。跳过前几层直接练后几层，容易变成人际技巧的空转。</p>
+<p>这套模型也有边界。它依赖长期的信任积累，短期突击很难见效；它要求真实地关心对方的处境，把「六力」当成操控他人的套路，迟早会被识破。面对需要上级拍板的事、涉及考核和资源的机制问题，非职权影响力替代不了正式的授权和决策——该向上报的报，该请领导介入的介入，前面两节已经说过。它的作用范围，是在权力够不着的地方，把事往前推一步。</p>
+<table>
+<thead>
+<tr>
+<th>误用方式</th>
+<th>后果</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>把影响力当话术，只练倾听的技巧</td>
+<td>缺乏真诚，信任建立不起来</td>
+<td>先真的理解对方的逻辑和需要</td>
+</tr>
+<tr>
+<td>越过执行力和信息力，直接谈整合</td>
+<td>根基不稳，无人买账</td>
+<td>先把事做靠谱，把信息汇聚起来</td>
+</tr>
+<tr>
+<td>用非职权手段替代正式决策</td>
+<td>该拍板的事悬而未决</td>
+<td>机制问题及时请双方领导介入</td>
+</tr>
+<tr>
+<td>只透明数据，忽略情绪</td>
+<td>数据摆出来了，团队无动于衷</td>
+<td>走脑与走心结合，让所有人看见</td>
+</tr>
+</tbody></table>
+<h2 id="沟通场景速查"><a href="#沟通场景速查" class="headerlink" title="沟通场景速查"></a>沟通场景速查</h2><table>
+<thead>
+<tr>
+<th>场景</th>
+<th>关键动作</th>
+<th>一句话判断</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>向上风险告警</td>
+<td>直面问题 + 五元素报告</td>
+<td>影响稳定性的事，必须让上级知晓</td>
+</tr>
+<tr>
+<td>向上争取支持</td>
+<td>抓核心关注 + 摆数据 + 给小行动</td>
+<td>别只反映问题，带上前进一小步的方案</td>
+</tr>
+<tr>
+<td>跨部门短期合作</td>
+<td>君子协定 + 机制 + 问题解决</td>
+<td>承诺越公开，约束力越强</td>
+</tr>
+<tr>
+<td>跨部门长期共生</td>
+<td>统一节奏 + 打开边界</td>
+<td>每个模块前进一步，整体才会改善</td>
+</tr>
+<tr>
+<td>向下建立信任</td>
+<td>六力递进，先做好自己</td>
+<td>影响力从靠谱和倾听开始</td>
+</tr>
+</tbody></table>
+<table>
+<thead>
+<tr>
+<th>速查项</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>紧急汇报五元素</td>
+<td>事件 &#x2F; 影响 &#x2F; 跟进分析 &#x2F; 响应措施 &#x2F; 所需支持</td>
+</tr>
+<tr>
+<td>向上三误区</td>
+<td>自己扛 &#x2F; 只吐槽 &#x2F; 抓不住重点</td>
+</tr>
+<tr>
+<td>跨部门两法</td>
+<td>约法三章（短期依赖）&#x2F; 打开边界（长期共生）</td>
+</tr>
+<tr>
+<td>担当力四层</td>
+<td>放弃 → 责怪 → 完成任务 → 担当</td>
+</tr>
+<tr>
+<td>六力模型</td>
+<td>执行 &#x2F; 信息 &#x2F; 感知 &#x2F; 透明 &#x2F; 影响 &#x2F; 整合</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>四个系列性问题在这里收束成一套判断：影响他人先从做好自己开始，把信息掌握住、把判断透明出去，再谈驱动别人。向上沟通要敢于让关键信息流动，跨部门要按合作性质选对方式，向下靠六力积累信任。权力够不着的地方，靠的是长期可信——把事做对、把话说清、把人放在心上，配合才会自然发生。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《项目管理实战20讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/" title="项目管理（四）非职权沟通——向上、跨部门与向下">https://xssdpgy.github.io/2023/11/20/项目管理（四）非职权沟通——向上、跨部门与向下/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/%E6%B2%9F%E9%80%9A/" rel="tag"># 沟通</a>
+              <a href="/tags/%E5%9B%A2%E9%98%9F%E5%8D%8F%E4%BD%9C/" rel="tag"># 团队协作</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/11/04/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E4%B8%89%EF%BC%89%E5%8F%98%E6%9B%B4%E3%80%81%E9%A3%8E%E9%99%A9%E3%80%81%E8%B4%A8%E9%87%8F%E4%B8%8E%E4%BC%9A%E8%AE%AE/" rel="prev" title="项目管理（三）变更、风险、质量与会议">
+      <i class="fa fa-chevron-left"></i> 项目管理（三）变更、风险、质量与会议
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%90%91%E4%B8%8A%E6%B2%9F%E9%80%9A%E7%9A%84%E4%B8%89%E4%B8%AA%E8%AF%AF%E5%8C%BA"><span class="nav-text">向上沟通的三个误区</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%B7%A8%E9%83%A8%E9%97%A8%E7%BA%A6%E6%B3%95%E4%B8%89%E7%AB%A0"><span class="nav-text">跨部门约法三章</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%90%91%E4%B8%8B%E6%B2%9F%E9%80%9A%E4%B8%8E%E5%85%AD%E5%8A%9B"><span class="nav-text">向下沟通与六力</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%9D%9E%E8%81%8C%E6%9D%83%E5%BD%B1%E5%93%8D%E5%8A%9B%E7%9A%84%E8%BE%B9%E7%95%8C"><span class="nav-text">非职权影响力的边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%B2%9F%E9%80%9A%E5%9C%BA%E6%99%AF%E9%80%9F%E6%9F%A5"><span class="nav-text">沟通场景速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">49</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">6</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">48</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'ff0d308bc82931189fc5998e2165d309',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
