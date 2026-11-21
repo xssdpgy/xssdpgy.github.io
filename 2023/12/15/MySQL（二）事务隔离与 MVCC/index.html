@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言四种隔离级别的名字背下来不难，关键在于它和查询返回的数据怎么对上。同一个事务里两次查同一行，结果可能一样也可能不一样；普通 select 和加了 for update 的 select，读到的版本也可能不同。这些差别背后是同一套东西——版本链和一致性视图。这篇先把四种级别的现象摆出来，再顺着版本链和视图的构造走一遍，最后看幻读为什么需要间隙锁。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（二）事务隔离与 MVCC">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言四种隔离级别的名字背下来不难，关键在于它和查询返回的数据怎么对上。同一个事务里两次查同一行，结果可能一样也可能不一样；普通 select 和加了 for update 的 select，读到的版本也可能不同。这些差别背后是同一套东西——版本链和一致性视图。这篇先把四种级别的现象摆出来，再顺着版本链和视图的构造走一遍，最后看幻读为什么需要间隙锁。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-12-15T07:47:33.000Z">
+<meta property="article:modified_time" content="2023-12-15T07:47:33.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="事务">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（二）事务隔离与 MVCC | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（二）事务隔离与 MVCC
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-12-15 15:47:33" itemprop="dateCreated datePublished" datetime="2023-12-15T15:47:33+08:00">2023-12-15</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.1k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>四种隔离级别的名字背下来不难，关键在于它和查询返回的数据怎么对上。同一个事务里两次查同一行，结果可能一样也可能不一样；普通 select 和加了 for update 的 select，读到的版本也可能不同。这些差别背后是同一套东西——版本链和一致性视图。这篇先把四种级别的现象摆出来，再顺着版本链和视图的构造走一遍，最后看幻读为什么需要间隙锁。</p>
+<span id="more"></span>
+
+<h2 id="隔离级别与现象"><a href="#隔离级别与现象" class="headerlink" title="隔离级别与现象"></a>隔离级别与现象</h2><p>事务要保证一组操作要么全部成功、要么全部失败。ACID 里的隔离性管的是并发事务之间的可见程度。多个事务同时跑，常见三种现象：读到别的事务尚未提交的改动，是脏读；同一事务两次读同一行，中间被别的事务改掉，结果不一样，是不可重复读；同一事务两次按条件查，后一次多出别的事务新插入的行，是幻读。</p>
+<p>隔离级别按能容忍的现象分成四档。读未提交允许读到未提交的改动；读提交只认提交后的改动；可重复读让事务执行期间看到的数据和启动时一致；串行化对同一行加读写锁，冲突时后来的事务等着。隔离越强，并发越弱，选哪一档要看业务能接受哪种现象。</p>
+<p>用一个只有一列的表看差别。表里先放一行 c&#x3D;1，事务 A 依次读三次，事务 B 在中间把 1 改成 2：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> T(c <span class="type">int</span>) engine<span class="operator">=</span>InnoDB;</span><br><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> T(c) <span class="keyword">values</span>(<span class="number">1</span>);</span><br></pre></td></tr></table></figure>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant A as 事务 A
+    participant B as 事务 B
+    A-&gt;&gt;A: begin
+    B-&gt;&gt;B: begin
+    B-&gt;&gt;B: update T set c&#x3D;2 （尚未提交）
+    A-&gt;&gt;A: V1 &#x3D; select c from T
+    B-&gt;&gt;B: commit
+    A-&gt;&gt;A: V2 &#x3D; select c from T
+    A-&gt;&gt;A: commit
+    A-&gt;&gt;A: V3 &#x3D; select c from T （新事务）
+</pre>
+
+<p>V1、V2、V3 三个读数，在不同级别下是：</p>
+<table>
+<thead>
+<tr>
+<th>隔离级别</th>
+<th>V1</th>
+<th>V2</th>
+<th>V3</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>读未提交</td>
+<td>2</td>
+<td>2</td>
+<td>2</td>
+</tr>
+<tr>
+<td>读提交</td>
+<td>1</td>
+<td>2</td>
+<td>2</td>
+</tr>
+<tr>
+<td>可重复读</td>
+<td>1</td>
+<td>1</td>
+<td>2</td>
+</tr>
+<tr>
+<td>串行化</td>
+<td>1</td>
+<td>1</td>
+<td>2</td>
+</tr>
+</tbody></table>
+<p>读未提交直接返回记录上的最新值，B 还没提交 A 就看到了 2。读提交等 B 提交后才让 A 看见，所以 V1 还是 1，V2 变成 2。可重复读把 A 看到的值钉在事务启动的那一刻，V2 仍是 1，直到 V3 属于提交后的新事务才读到 2。串行化下 A 的读加读锁，B 的更新被挡住，要等 A 提交后才能继续，A 这边的读数保持前两次是 1。</p>
+<p>四种级别在 InnoDB 里的实现分两条路。读未提交没有视图，直接读最新值；串行化靠加锁让读写排开；读提交和可重复读都靠一致性视图，区别在于视图什么时候建——读提交每条语句执行前重新算一个，可重复读在事务启动时建一次，之后整个事务共用。隔离级别由启动参数 <code>transaction_isolation</code> 指定，用 <code>show variables like &#39;transaction_isolation&#39;</code> 能看当前值。从 Oracle 迁过来的应用通常设成读提交，保持和原来一致；对账这类需要整段计算看同一份数据的场景，用可重复读省事。</p>
+<h2 id="一致性视图与版本链"><a href="#一致性视图与版本链" class="headerlink" title="一致性视图与版本链"></a>一致性视图与版本链</h2><p>可重复读下事务像是与世无争，别人改了它还是看老数据。这个快照不用真的拷贝整库，靠的是每行数据的多个版本。</p>
+<p>InnoDB 给每个事务分配一个严格递增的 transaction id。每次更新一行，就生成这行的一个新版本，把更新它的事务 id 记成这个版本的 row trx_id，旧版本保留。同一行连着被改几次，就串出一条版本链。</p>
+<pre class="mermaid">
+flowchart LR
+    V4[&quot;V4 · k&#x3D;22&lt;br&#x2F;&gt;row trx_id&#x3D;25 · 当前版本&quot;] --&gt;|U3| V3[&quot;V3 · k&#x3D;20&lt;br&#x2F;&gt;row trx_id&#x3D;20&quot;]
+    V3 --&gt;|U2| V2[&quot;V2 · k&#x3D;15&lt;br&#x2F;&gt;row trx_id&#x3D;15&quot;]
+    V2 --&gt;|U1| V1[&quot;V1 · k&#x3D;10&lt;br&#x2F;&gt;row trx_id&#x3D;10&quot;]
+</pre>
+
+<p>链上的 U1、U2、U3 就是 undo log。V1、V2、V3 并没有物理存着，需要哪个版本，就从当前版本 V4 沿着 undo log 一路算回去。要 V2，就执行 U3、U2。</p>
+<p>快照靠一个数组实现。事务启动时，InnoDB 把此刻还在活跃（启动了没提交）的事务 id 记进数组，数组里的最小值叫低水位，系统已经创建过的最大事务 id 加一叫高水位。数组加高水位合起来就是一致性视图。判断某个数据版本对当前事务可见与否，拿它的 row trx_id 和这个视图比：</p>
+<pre class="mermaid">
+flowchart LR
+    subgraph view[&quot;一致性视图：视图数组 + 高水位&quot;]
+    direction LR
+    A1[&quot;trx_id 低于低水位&lt;br&#x2F;&gt;启动前已提交 · 可见&quot;]
+    A2[&quot;trx_id 介于低水位与高水位&lt;br&#x2F;&gt;在数组中不可见 · 不在数组中可见&quot;]
+    A3[&quot;trx_id 不低于高水位&lt;br&#x2F;&gt;启动后生成 · 不可见&quot;]
+    end
+</pre>
+
+<p>换成按时间说更好记：版本在视图创建前提交的，可见；创建后提交的，不可见；创建时还没提交的，不可见；事务自己改的，总是可见。读一行时从当前版本往回找，碰到第一个可见的版本就返回。</p>
+<p>版本链留着不删，是为了给老视图留退路。系统里没有比某段 undo log 更早的视图时，这段日志才能回收。长事务会一直攥着一个很老的视图，它提交之前，期间产生的回滚记录都得留着，占存储空间，还占着锁。查超过 60 秒的事务可以看：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> information_schema.innodb_trx</span><br><span class="line"><span class="keyword">where</span> time_to_sec(timediff(now(), trx_started)) <span class="operator">&gt;</span> <span class="number">60</span>;</span><br></pre></td></tr></table></figure>
+
+<p>事务怎么启动也有讲究。begin 或 start transaction 之后，要等到第一条操作 InnoDB 表的语句，事务才算真正起来；想立刻拿到一致的快照，用 start transaction with consistent snapshot。另一种写法 set autocommit&#x3D;0 会把当前线程的自动提交关掉，之后随便一个 select 都落在事务里，长连接下容易攒出意外的长事务。建议保持 autocommit&#x3D;1，需要事务时显式 begin；担心多一次交互，可以用 commit work and chain，提交当前事务并顺手开启下一个，省掉再次 begin。</p>
+<h2 id="快照读与当前读"><a href="#快照读与当前读" class="headerlink" title="快照读与当前读"></a>快照读与当前读</h2><p>回到开头那个让人犯晕的结果：事务 B 查到 k&#x3D;3，事务 A 查到 k&#x3D;1。表 t 里初始两行 (1,1)、(2,2)，三个事务按下面的顺序走：</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant A as 事务 A (trx 100)
+    participant B as 事务 B (trx 101)
+    participant C as 事务 C (trx 102)
+    Note over A,C: A 启动时活跃事务 99，初始行 row trx_id&#x3D;90
+    C-&gt;&gt;C: update t set k&#x3D;k+1 where id&#x3D;1 得到 (1,2)
+    C-&gt;&gt;C: commit
+    B-&gt;&gt;B: update t set k&#x3D;k+1 where id&#x3D;1 得到 (1,3)
+    B-&gt;&gt;B: select k where id&#x3D;1 得到 3
+    A-&gt;&gt;A: select k where id&#x3D;1 得到 1
+</pre>
+
+<p>A 的视图数组是 [99,100]，B 是 [99,100,101]，C 是 [99,100,101,102]。C 先把 (1,1) 改成 (1,2) 并提交，B 又在 (1,2) 的基础上改成 (1,3)，此刻最新版本是 (1,3)，row trx_id&#x3D;101。</p>
+<p>A 查询时从最新版本往回走，判断过程是这样：</p>
+<pre class="mermaid">
+flowchart TD
+    S[&quot;当前版本 (1,3)&lt;br&#x2F;&gt;row trx_id&#x3D;101&quot;] --&gt; Q1{&quot;对 A 的视图可见?&quot;}
+    Q1 --&gt;|不可见，在数组中| N1[&quot;回退到 (1,2)&lt;br&#x2F;&gt;row trx_id&#x3D;102&quot;]
+    N1 --&gt; Q2{&quot;对 A 的视图可见?&quot;}
+    Q2 --&gt;|不可见，高于高水位| N2[&quot;回退到 (1,1)&lt;br&#x2F;&gt;row trx_id&#x3D;90&quot;]
+    N2 --&gt; Q3{&quot;对 A 的视图可见?&quot;}
+    Q3 --&gt;|可见，低于低水位| R[&quot;返回 k&#x3D;1&quot;]
+</pre>
+
+<p>B 查到 3，道理在更新那一步。更新永远是先读后写，这个读走的是当前读——读已经提交的最新值，不走自己的视图。B 执行 k&#x3D;k+1 时拿到的当前值是 C 提交的 (1,2)，加一得到 (1,3)。随后 B 再查询，看到最新版本 row trx_id&#x3D;101 正是自己，直接返回 3。</p>
+<p>普通 select 走快照读，按视图挑版本；update、delete，以及 select … for update 或 lock in share mode 走当前读，锁定读最新版本，碰上别人的行锁就等。两条路分得清，很多看不见的疑惑就解开了。</p>
+<pre class="mermaid">
+flowchart TD
+    Q[&quot;一条读语句&quot;] --&gt; L{&quot;带锁?&quot;}
+    L --&gt;|&quot;普通 select&quot;| S[&quot;快照读：按视图挑可见版本&quot;]
+    L --&gt;|&quot;for update &#x2F; lock in share mode&quot;| C[&quot;当前读：读最新版本，遇锁等待&quot;]
+    S --&gt; R1[&quot;可重复读：复用事务视图&quot;]
+    S --&gt; R2[&quot;读提交：语句前新建视图&quot;]
+</pre>
+
+<p>可重复读和读提交的差别，落在视图创建的时机上。可重复读整个事务共用一个视图，读提交每条语句前重算一个。同样三个事务的时序，读提交下 A 查询的视图在语句执行时才建，(1,3) 还没提交不可见，(1,2) 已提交可见，A 读到 k&#x3D;2；B 仍然读到 3。表结构没有 row trx_id，只能走当前读那条路，这也是表结构没法做可重复读的原因。</p>
+<h2 id="幻读与间隙锁"><a href="#幻读与间隙锁" class="headerlink" title="幻读与间隙锁"></a>幻读与间隙锁</h2><p>快照读和当前读的分工，在当前读下会碰到一个麻烦。表 t 有主键 id 和索引 c，初始 6 行，id 分别是 0、5、10、15、20、25。session A 在同一个事务里连查三次：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t <span class="keyword">where</span> d<span class="operator">=</span><span class="number">5</span> <span class="keyword">for</span> <span class="keyword">update</span>;</span><br></pre></td></tr></table></figure>
+
+<p>三次查询之间，session B 把 id&#x3D;0 这行的 d 改成 5，session C 插入一行 (1,1,5)。三次结果依次多了 id&#x3D;0 和 id&#x3D;1 两行。后一次查询看到了前一次没看到的新插入行，这就是幻读。B 把已有行的 d 改成 5 让 A 多看到一行，这种不算幻读；幻读专指新插入的行。快照读看不到别的事务插入的数据，所以幻读只在当前读下出现。</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant A as session A
+    participant B as session B
+    participant C as session C
+    A-&gt;&gt;A: Q1: d&#x3D;5 当前读 得到 {5}
+    B-&gt;&gt;B: update t set d&#x3D;5 where id&#x3D;0
+    A-&gt;&gt;A: Q2: d&#x3D;5 当前读 得到 {0,5}
+    C-&gt;&gt;C: insert into t values(1,1,5)
+    A-&gt;&gt;A: Q3: d&#x3D;5 当前读 得到 {0,1,5} 幻读
+</pre>
+
+<p>按事务可见性规则看，这三次当前读都读到了已提交的最新值，本身没违反规则。麻烦在两处。一是语义：A 声明要锁住所有 d&#x3D;5 的行，B 和 C 却还能改、还能插。二是一致性：A 随后执行 update t set d&#x3D;100 where d&#x3D;5，数据库里最终只有 id&#x3D;5 这行被改成 100，可 binlog 按提交顺序重放到备库，id&#x3D;0 和 id&#x3D;1 也会变成 100，主备数据就对不上了。</p>
+<p>把扫描到的所有行都加上行锁，能挡住 B 改 id&#x3D;0，仍挡不住 C 插入 id&#x3D;1——插入时那行还不存在，行锁无处可加。InnoDB 于是加了一把间隙锁，锁的是记录之间的空隙。行锁和间隙锁合起来叫 next-key lock，区间前开后闭。表 t 锁全表时形成 7 段：</p>
+<pre class="mermaid">
+flowchart LR
+    G[&quot;(-∞,0]&quot;] --- R0[&quot;(0,5]&quot;] --- R5[&quot;(5,10]&quot;] --- R10[&quot;(10,15]&quot;] --- R15[&quot;(15,20]&quot;] --- R20[&quot;(20,25]&quot;] --- RS[&quot;(25,+supremum]&quot;]
+</pre>
+
+<p>间隙锁彼此不冲突，冲突的是往同一间隙插入记录。两个事务都查 id&#x3D;9（不存在），都会加 (5,10) 的间隙锁；谁先插入 (9,9,9)，就会被对方的间隙锁挡住，两个事务互相等待形成死锁，由死锁检测挑一个报错返回。</p>
+<p>不想要间隙锁，可以把隔离级别设成读提交——这个级别下间隙锁不生效，锁的范围小。代价是得把 binlog 格式设成 row，才能保证前面说的数据和日志一致。这个组合能用，但选它的理由应该是业务用不到可重复读，而大家都这么配算不上理由：mysqldump 逻辑备份时用的还是可重复读，同一个库里并存两种隔离级别，先把各自的现象弄清楚再说没问题。</p>
+<h2 id="事务隔离速查"><a href="#事务隔离速查" class="headerlink" title="事务隔离速查"></a>事务隔离速查</h2><table>
+<thead>
+<tr>
+<th>现象或需求</th>
+<th>背后的机制</th>
+<th>处理方向</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>读到未提交的改动</td>
+<td>读未提交没有视图</td>
+<td>改读提交或可重复读</td>
+</tr>
+<tr>
+<td>同一事务两次读数不同</td>
+<td>读提交每条语句重建视图</td>
+<td>需要对账一致性就用可重复读</td>
+</tr>
+<tr>
+<td>更新覆盖了别人的改动</td>
+<td>快照读在历史版本上更新会丢</td>
+<td>更新走当前读，靠行锁串行</td>
+</tr>
+<tr>
+<td>当前读多出新插入的行</td>
+<td>幻读，行锁锁不住不存在的行</td>
+<td>next-key lock 锁住间隙</td>
+</tr>
+<tr>
+<td>两个会话插入同一不存在 id 卡住</td>
+<td>间隙锁互相挡住插入</td>
+<td>死锁检测报错，或改用读提交加 row binlog</td>
+</tr>
+<tr>
+<td>回滚段一直涨</td>
+<td>长事务攥着老视图</td>
+<td>查 innodb_trx，缩短事务范围</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>隔离级别是现象上的约定，一致性视图和版本链是它的实现。读提交每条语句重建视图，可重复读整个事务共用一个，两者都靠 row trx_id 判断版本可见性；更新走当前读，快照读走视图。幻读出在当前读上，行锁管不到还不存在的记录，所以要靠间隙锁补上。选隔离级别时，把能容忍的现象、锁的范围和 binlog 格式放在一起看，比单看性能得失更靠得住。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《MySQL 实战 45 讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/" title="MySQL（二）事务隔离与 MVCC">https://xssdpgy.github.io/2023/12/15/MySQL（二）事务隔离与 MVCC/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E4%BA%8B%E5%8A%A1/" rel="tag"># 事务</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/12/08/MySQL%EF%BC%88%E4%B8%80%EF%BC%89SQL%20%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E4%B8%8E%E6%97%A5%E5%BF%97%E7%B3%BB%E7%BB%9F/" rel="prev" title="MySQL（一）SQL 执行链路与日志系统">
+      <i class="fa fa-chevron-left"></i> MySQL（一）SQL 执行链路与日志系统
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/" rel="next" title="MySQL（三）索引——结构与设计取舍">
+      MySQL（三）索引——结构与设计取舍 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%9A%94%E7%A6%BB%E7%BA%A7%E5%88%AB%E4%B8%8E%E7%8E%B0%E8%B1%A1"><span class="nav-text">隔离级别与现象</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%80%E8%87%B4%E6%80%A7%E8%A7%86%E5%9B%BE%E4%B8%8E%E7%89%88%E6%9C%AC%E9%93%BE"><span class="nav-text">一致性视图与版本链</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BF%AB%E7%85%A7%E8%AF%BB%E4%B8%8E%E5%BD%93%E5%89%8D%E8%AF%BB"><span class="nav-text">快照读与当前读</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B9%BB%E8%AF%BB%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81"><span class="nav-text">幻读与间隙锁</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E9%80%9F%E6%9F%A5"><span class="nav-text">事务隔离速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '1bed690307c0c570245a74e2a2ad835d',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

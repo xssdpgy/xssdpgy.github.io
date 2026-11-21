@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言查询慢了加个索引，是常见的第一反应。索引为什么能加快查询，加错了又会带来什么代价，很多说法停在口头经验上。这篇沿着 InnoDB 的索引结构往下走：先看清 B+ 树里主键索引和二级索引各存了什么，为什么有的查询要回表、有的不用；再看联合索引怎么靠最左前缀复用，字符串字段怎么取舍前缀长度；最后落到普通索引和唯一索引在更新路径上的差别。索引设计没有通用答案，但每个选择背后的代价是固定的，看清代价再">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（三）索引——结构与设计取舍">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言查询慢了加个索引，是常见的第一反应。索引为什么能加快查询，加错了又会带来什么代价，很多说法停在口头经验上。这篇沿着 InnoDB 的索引结构往下走：先看清 B+ 树里主键索引和二级索引各存了什么，为什么有的查询要回表、有的不用；再看联合索引怎么靠最左前缀复用，字符串字段怎么取舍前缀长度；最后落到普通索引和唯一索引在更新路径上的差别。索引设计没有通用答案，但每个选择背后的代价是固定的，看清代价再">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-01-10T14:18:05.000Z">
+<meta property="article:modified_time" content="2024-01-10T14:18:05.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="索引">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（三）索引——结构与设计取舍 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（三）索引——结构与设计取舍
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-01-10 22:18:05" itemprop="dateCreated datePublished" datetime="2024-01-10T22:18:05+08:00">2024-01-10</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.9k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>查询慢了加个索引，是常见的第一反应。索引为什么能加快查询，加错了又会带来什么代价，很多说法停在口头经验上。这篇沿着 InnoDB 的索引结构往下走：先看清 B+ 树里主键索引和二级索引各存了什么，为什么有的查询要回表、有的不用；再看联合索引怎么靠最左前缀复用，字符串字段怎么取舍前缀长度；最后落到普通索引和唯一索引在更新路径上的差别。索引设计没有通用答案，但每个选择背后的代价是固定的，看清代价再权衡。</p>
+<span id="more"></span>
+
+<h2 id="B-树与聚簇索引"><a href="#B-树与聚簇索引" class="headerlink" title="B+ 树与聚簇索引"></a>B+ 树与聚簇索引</h2><p>索引是表的目录。能当目录的数据结构不少：哈希表适合等值查询，范围查询要全扫；有序数组查询快，插一条就得挪动后面所有记录，只适合不再修改的数据；搜索树查询和更新的复杂度都是对数级，但要落到磁盘上，二叉的高度就成了问题。一百万个节点的平衡二叉树高约 20，查一行可能访问 20 个数据块，机械盘每次随机读约 10ms，这个延迟扛不住。</p>
+<p>数据库用的是 N 叉树，N 由数据页大小决定。以一个整数字段索引为例，一个节点大约能放 1200 个键值，树高 4 时已能存 17 亿个值。根节点常驻内存，十亿行的表查一个值最多访问三次磁盘，第二层也大概率在内存里，平均次数更少。B+ 树被选中，靠的是贴合磁盘的读写粒度，用很少的磁盘访问次数定位记录。</p>
+<p>InnoDB 是索引组织表，数据按主键顺序存放在 B+ 树里，每个索引对应一棵树。两棵树的叶子节点内容不同：</p>
+<pre class="mermaid">
+flowchart TB
+    subgraph PK[&quot;主键索引树（聚簇索引）&quot;]
+    direction TB
+    P1[&quot;根节点 100 &#x2F; 300 &#x2F; 500&quot;] --&gt; P2[&quot;叶节点&lt;br&#x2F;&gt;100 → 整行 R1&quot;]
+    P1 --&gt; P3[&quot;叶节点&lt;br&#x2F;&gt;200 → 整行 R2&quot;]
+    P1 --&gt; P4[&quot;叶节点&lt;br&#x2F;&gt;500 → 整行 R5&quot;]
+    end
+    subgraph SK[&quot;k 索引树（二级索引）&quot;]
+    direction TB
+    S1[&quot;根节点 1 &#x2F; 3 &#x2F; 5&quot;] --&gt; S2[&quot;叶节点&lt;br&#x2F;&gt;k&#x3D;1 → 主键 100&quot;]
+    S1 --&gt; S3[&quot;叶节点&lt;br&#x2F;&gt;k&#x3D;3 → 主键 300&quot;]
+    S1 --&gt; S4[&quot;叶节点&lt;br&#x2F;&gt;k&#x3D;5 → 主键 500&quot;]
+    end
+    S4 -. &quot;拿主键再查一次&quot; .-&gt; P4
+</pre>
+
+<p>主键索引的叶子节点存整行数据，叫聚簇索引；二级索引的叶子节点存主键的值，叫二级索引。<code>select * from T where ID=500</code> 搜一棵树就够，<code>select * from T where k=5</code> 要先在 k 树上取到主键 500，再到主键树查整行，这第二步叫回表。所以基于二级索引的查询要多扫一棵树，能用主键查就尽量用主键。</p>
+<p>B+ 树为了维持有序，插入新值时要做维护。按主键 100、200、300、500、600 的顺序，插 700 直接在末尾追加；插 400 就得挪动后面的数据腾位置。如果目标数据页已经满了，还要申请新页、搬一部分数据过去，这就是页分裂，性能受影响，页的利用率也掉到大约一半。删数据后相邻两页利用率太低，又会触发页合并。</p>
+<p>自增主键的价值就在这里。新记录的主键值递增，每次插入都是追加，不挪动其他记录，也不触发叶子节点分裂。用业务字段做主键，往往保证不了有序插入，写入成本更高。空间上也有差别：二级索引的叶子节点都带一份主键值，用身份证号当主键，每个叶子节点约占 20 字节；用整型只要 4 字节，长整型 8 字节。主键越长，所有二级索引跟着膨胀。</p>
+<p>也有用业务字段直接做主键的场景。表只有一个索引，而且这个索引必须唯一——典型的 KV 结构，没有其他二级索引要照顾，直接把这个唯一字段设为主键，查询一次树搜索就能拿到整行，省掉回表。</p>
+<h2 id="回表与覆盖索引"><a href="#回表与覆盖索引" class="headerlink" title="回表与覆盖索引"></a>回表与覆盖索引</h2><p>用一张带主键 ID、字段 k 和字符串 s 的表看回表的成本：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> T (</span><br><span class="line">  ID <span class="type">int</span> <span class="keyword">primary</span> key,</span><br><span class="line">  k <span class="type">int</span> <span class="keyword">not</span> <span class="keyword">null</span>,</span><br><span class="line">  s <span class="type">varchar</span>(<span class="number">16</span>),</span><br><span class="line">  index k(k)</span><br><span class="line">) engine<span class="operator">=</span>InnoDB;</span><br><span class="line"></span><br><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> T <span class="keyword">values</span></span><br><span class="line">  (<span class="number">100</span>,<span class="number">1</span>,<span class="string">&#x27;aa&#x27;</span>),(<span class="number">200</span>,<span class="number">2</span>,<span class="string">&#x27;bb&#x27;</span>),(<span class="number">300</span>,<span class="number">3</span>,<span class="string">&#x27;cc&#x27;</span>),</span><br><span class="line">  (<span class="number">500</span>,<span class="number">5</span>,<span class="string">&#x27;ee&#x27;</span>),(<span class="number">600</span>,<span class="number">6</span>,<span class="string">&#x27;ff&#x27;</span>);</span><br><span class="line"></span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> T <span class="keyword">where</span> k <span class="keyword">between</span> <span class="number">3</span> <span class="keyword">and</span> <span class="number">5</span>;</span><br></pre></td></tr></table></figure>
+
+<p>执行过程是：在 k 树找到 k&#x3D;3，取出主键 300，回主键树查整行；在 k 树取下一条 k&#x3D;5，取出主键 500，再回主键树一次；再取下一条 k&#x3D;6，不满足条件结束。k 树读了 3 条记录，回表 2 次。回表的次数，就是需要整行数据的次数。</p>
+<p>如果查询改成 <code>select ID from T where k between 3 and 5</code>，要的 ID 已经在 k 树的叶子节点上，直接返回，一次回表都不用。这时称索引 k 覆盖了查询需求，叫覆盖索引。覆盖索引减少树搜索次数，是常用的优化手段。要注意引擎内部在 k 树上读了三条记录，Server 层拿到的是两条结果，所以 <code>rows_examined</code> 记的是 2。</p>
+<pre class="mermaid">
+flowchart LR
+    Q[&quot;where k between 3 and 5&quot;] --&gt; K[&quot;在 k 索引树定位&lt;br&#x2F;&gt;读到 3 条记录&quot;]
+    K --&gt; B{&quot;要返回的字段&lt;br&#x2F;&gt;都在 k 树上?&quot;}
+    B --&gt;|&quot;否：select *&quot;| R[&quot;按主键回表 2 次&lt;br&#x2F;&gt;取整行数据&quot;]
+    B --&gt;|&quot;是：select ID&quot;| C[&quot;直接返回结果&lt;br&#x2F;&gt;回表 0 次&quot;]
+</pre>
+
+<p>覆盖索引还能省掉建索引的纠结。市民表上已经有身份证号索引，如果”按身份证号查姓名”是高频请求，可以建一个（身份证号，姓名）联合索引，让这个请求走覆盖索引，不再回表读整行。冗余一个索引字段换来高频请求的提速，值不值要看请求频率和字段维护成本。索引越多，写入时的维护负担越重，这一步需要业务侧权衡。</p>
+<h2 id="最左前缀与前缀索引"><a href="#最左前缀与前缀索引" class="headerlink" title="最左前缀与前缀索引"></a>最左前缀与前缀索引</h2><p>为每种查询各建一个索引，索引会多到难以维护。B+ 树可以利用联合索引的最左前缀来定位记录。以（name，age）联合索引为例，索引项按定义里的字段顺序排序：先按 name 排，name 相同再按 age 排。查 <code>name=&#39;张三&#39;</code> 能快速定位到第一条满足的记录再向后遍历；查 <code>name like &#39;张%&#39;</code> 也可以用上这个索引。最左前缀可以是最左 N 个字段，也可以是字符串索引的最左 M 个字符。</p>
+<p>由此得到安排联合索引字段顺序的原则：看复用能力。有了 (a,b)，一般就不用单独在 a 上建索引，a 是最左前缀。只有 b 条件的查询用不上 (a,b)，得另建 (b) 索引，这时按空间决定——name 字段比 age 大，就建（name，age）加（age），把大的字段放前面能省索引空间。</p>
+<p>最左前缀只负责定位，索引里靠后的字段还能帮忙过滤。查<code>名字第一个字是张、年龄 10 岁的男孩</code>，条件落在（name，age）上，name 用 ‘张%’ 定位，age 在索引里就有值。引擎在遍历索引时先判断 age 是否等于 10，把不满足的记录直接跳过，只让符合的回表。这就是索引下推，效果是回表次数从 4 次降到 2 次：</p>
+<pre class="mermaid">
+flowchart LR
+    subgraph OLD[&quot;没有下推&quot;]
+    direction TB
+    O1[&quot;name like &#39;张%&#39;&lt;br&#x2F;&gt;取出 4 条索引记录&quot;] --&gt; O2[&quot;逐条回表&lt;br&#x2F;&gt;回表 4 次&quot;]
+    O2 --&gt; O3[&quot;Server 层再判断&lt;br&#x2F;&gt;age 和 ismale&quot;]
+    end
+    subgraph NEW[&quot;有下推&quot;]
+    direction TB
+    N1[&quot;name like &#39;张%&#39;&lt;br&#x2F;&gt;遍历时判断 age&quot;] --&gt; N2[&quot;过滤掉 age 不符的&lt;br&#x2F;&gt;只对 2 条回表&quot;]
+    N2 --&gt; N3[&quot;回表 2 次&quot;]
+    end
+</pre>
+
+<p>字符串字段上，完整索引占空间，可以只取前缀建索引。email 上建 <code>index(email)</code> 包含整个字符串，<code>index(email(6))</code> 每个值只存前 6 个字节，省空间，代价是可能多条记录共享同一个前缀。<code>select id,name,email from SUser where email=&#39;zhangssxyz@xxx.com&#39;</code> 用 email(6) 时，前 6 字节 ‘zhangs’ 可能命中多条，每条都要回表拿完整 email 再比对，扫描行数从 1 变成 4；把前缀改成 email(7)，命中的只剩一条，又回到扫描一行。</p>
+<p>前缀多长合适，看区分度。先 <code>select count(distinct email) as L from SUser</code> 算出全列不同值的数量，再用 <code>count(distinct left(email,4))</code> 到 <code>count(distinct left(email,7))</code> 逐段比较，设定一个可接受的损失比例，比如 5%，取第一个不低于 L×95% 的长度。前缀索引还有个容易被忽略的代价：即使 <code>select id,email from SUser where email=&#39;...&#39;</code> 只要求返回索引里已有的字段，InnoDB 仍然要回表，因为系统不确定前缀是否截断了完整信息，覆盖索引在这里用不上。</p>
+<p>身份证号这类字段前几位是地址码，同县的人前缀相同，前缀索引的区分度很差。等值查询场景下可以换两种做法。一是倒序存储，把身份证号倒过来存、建前缀索引，查询时用 <code>reverse()</code> 处理输入，末 6 位没有地址码，区分度够用。二是加一个整数字段存 <code>crc32()</code> 校验码，在校验码上建索引，查询时 <code>where id_card_crc=crc32(&#39;...&#39;) and id_card=&#39;...&#39;</code>，用精确比对兜住哈希冲突，索引长度降到 4 字节。两者都不支持范围查询；倒序存储不额外占字段空间、CPU 消耗略小，哈希字段的查询性能更稳定，平均扫描行数接近 1。</p>
+<h2 id="普通索引与唯一索引"><a href="#普通索引与唯一索引" class="headerlink" title="普通索引与唯一索引"></a>普通索引与唯一索引</h2><p>字段值唯一时，建唯一索引还是普通索引？查询能力上没有差别。普通索引找到第一条满足的记录后，还要看下一有没有相同值；唯一索引找到一条就停。这个差别落在数据页内部，一次指针寻找加一次判断，而页早就在内存里，成本相对 CPU 可以忽略。</p>
+<p>更新路径上的差别更值得看。InnoDB 更新一个数据页时，如果目标页不在内存，普通索引可以把这次改动缓存在 change buffer 里，记一笔就结束，不必从磁盘读入数据页；唯一索引必须先判断值是否重复，这要求把数据页读进内存，既然页已经在内存，直接更新更快，change buffer 就用不上了。change buffer 里的记录会在访问这个页、后台线程定时触发或正常关闭时 merge 回原数据页，它本身也会持久化，内存里存着的只是它的一份拷贝。</p>
+<pre class="mermaid">
+flowchart TD
+    U[&quot;插入一条记录&lt;br&#x2F;&gt;普通索引&quot;] --&gt; M{&quot;目标数据页&lt;br&#x2F;&gt;在内存?&quot;}
+    M --&gt;|在| D[&quot;直接更新内存页&quot;]
+    M --&gt;|不在| C[&quot;改动记入 change buffer&lt;br&#x2F;&gt;不必读磁盘&quot;]
+    C --&gt; W[&quot;写入 redo log 后&lt;br&#x2F;&gt;语句即可返回&quot;]
+    W --&gt; G[&quot;后续读到该页时&lt;br&#x2F;&gt;merge 回数据页&quot;]
+</pre>
+
+<p>change buffer 对写多读少的业务收益最大，账单类、日志类系统页面写完很少马上被读，merge 之前攒的改动越多越划算。反过来，写入后立刻查询的业务会马上触发 merge，随机 IO 一次没省，还多了维护 change buffer 的代价。redolog 和 change buffer 都在减少随机 IO，分工不同：前者把随机写转成顺序写，后者省掉随机读。</p>
+<p>所以业务能保证字段不重复时，从性能出发优先普通索引，机械盘上的历史数据表尤其如此。唯一索引没法借 change buffer 缓存改动，把普通索引改成唯一索引，可能直接把更新性能拖垮：大量插入的业务，内存命中率会从九成多掉到七成多，更新语句排队堵住。反过来，业务无法保证唯一，或者本来就要求数据库强约束，就必须用唯一索引，这时它带来的写入代价是买约束的票价。好友关系这类场景还专门靠唯一索引做并发控制：两张表的唯一约束加上固定顺序的写入，让”互相关注”的双方必然有一方撞上行锁冲突，避免并发下漏建好友关系。</p>
+<h2 id="索引设计速查"><a href="#索引设计速查" class="headerlink" title="索引设计速查"></a>索引设计速查</h2><table>
+<thead>
+<tr>
+<th>现象或需求</th>
+<th>背后的机制</th>
+<th>处理方向</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>二级索引查询多扫一棵树</td>
+<td>叶子节点只存主键，要回表</td>
+<td>高频查询用覆盖索引或走主键</td>
+</tr>
+<tr>
+<td>写入时页分裂、空间利用率下降</td>
+<td>主键无序插入</td>
+<td>用自增主键，除非是单索引 KV 表</td>
+</tr>
+<tr>
+<td>联合索引只用得上第一个字段</td>
+<td>B+ 树按最左前缀排序</td>
+<td>按复用能力和字段大小安排顺序</td>
+</tr>
+<tr>
+<td>like 前缀查询回表多</td>
+<td>下推前不判断索引内其他字段</td>
+<td>靠索引下推提前过滤；前缀长度看区分度</td>
+</tr>
+<tr>
+<td>身份证前几位区分度低</td>
+<td>地址码重复</td>
+<td>倒序存储或 hash 字段，只支持等值查询</td>
+</tr>
+<tr>
+<td>普通索引改唯一索引后写入变慢</td>
+<td>唯一索引没法缓存改动到 change buffer</td>
+<td>业务能保证唯一就用普通索引</td>
+</tr>
+<tr>
+<td>写完马上查询，change buffer 没收益</td>
+<td>访问页立即触发 merge</td>
+<td>关闭 change buffer</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>索引的取舍都落在结构上：聚簇索引存整行、二级索引存主键，决定了回表；B+ 树按最左前缀排序，决定了联合索引能复用多少；change buffer 只对普通索引开放，决定了查询和更新两条路径的分岔。设计索引时，先算清查询能省几次树搜索、写入要付多少维护成本，再决定建哪些、建多长、建不建唯一。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《MySQL 实战 45 讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/" title="MySQL（三）索引——结构与设计取舍">https://xssdpgy.github.io/2024/01/10/MySQL（三）索引——结构与设计取舍/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E7%B4%A2%E5%BC%95/" rel="tag"># 索引</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/" rel="prev" title="MySQL（二）事务隔离与 MVCC">
+      <i class="fa fa-chevron-left"></i> MySQL（二）事务隔离与 MVCC
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/" rel="next" title="MySQL（四）锁机制——表锁、行锁与间隙锁">
+      MySQL（四）锁机制——表锁、行锁与间隙锁 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#B-%E6%A0%91%E4%B8%8E%E8%81%9A%E7%B0%87%E7%B4%A2%E5%BC%95"><span class="nav-text">B+ 树与聚簇索引</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%9B%9E%E8%A1%A8%E4%B8%8E%E8%A6%86%E7%9B%96%E7%B4%A2%E5%BC%95"><span class="nav-text">回表与覆盖索引</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%9C%80%E5%B7%A6%E5%89%8D%E7%BC%80%E4%B8%8E%E5%89%8D%E7%BC%80%E7%B4%A2%E5%BC%95"><span class="nav-text">最左前缀与前缀索引</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%99%AE%E9%80%9A%E7%B4%A2%E5%BC%95%E4%B8%8E%E5%94%AF%E4%B8%80%E7%B4%A2%E5%BC%95"><span class="nav-text">普通索引与唯一索引</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%B4%A2%E5%BC%95%E8%AE%BE%E8%AE%A1%E9%80%9F%E6%9F%A5"><span class="nav-text">索引设计速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'c3b5e942bac35486c9edd5f4b7195ecf',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

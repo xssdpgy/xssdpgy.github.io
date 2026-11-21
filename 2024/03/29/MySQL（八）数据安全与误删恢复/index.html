@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言数据安全这件事分两头。一头是写进去之后别丢：WAL 把随机写换成顺序写，代价是内存里攒下脏页，刷的时候可能让一条本来很快的语句突然变慢。另一头是删错了能找回来：delete 删的行、drop 掉的表、rm 掉的整个实例，恢复路径各不相同，能恢复到什么程度取决于备份和日志留了多久。再往前一步是运行时的边界——kill 不掉的语句卡在哪、全表扫描会不会把内存打爆。这篇把这几件事放一起，按「异常从哪">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（八）数据安全与误删恢复">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/03/29/MySQL%EF%BC%88%E5%85%AB%EF%BC%89%E6%95%B0%E6%8D%AE%E5%AE%89%E5%85%A8%E4%B8%8E%E8%AF%AF%E5%88%A0%E6%81%A2%E5%A4%8D/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言数据安全这件事分两头。一头是写进去之后别丢：WAL 把随机写换成顺序写，代价是内存里攒下脏页，刷的时候可能让一条本来很快的语句突然变慢。另一头是删错了能找回来：delete 删的行、drop 掉的表、rm 掉的整个实例，恢复路径各不相同，能恢复到什么程度取决于备份和日志留了多久。再往前一步是运行时的边界——kill 不掉的语句卡在哪、全表扫描会不会把内存打爆。这篇把这几件事放一起，按「异常从哪">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-03-29T02:41:16.000Z">
+<meta property="article:modified_time" content="2024-03-29T02:41:16.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="数据恢复">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/03/29/MySQL%EF%BC%88%E5%85%AB%EF%BC%89%E6%95%B0%E6%8D%AE%E5%AE%89%E5%85%A8%E4%B8%8E%E8%AF%AF%E5%88%A0%E6%81%A2%E5%A4%8D/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（八）数据安全与误删恢复 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/03/29/MySQL%EF%BC%88%E5%85%AB%EF%BC%89%E6%95%B0%E6%8D%AE%E5%AE%89%E5%85%A8%E4%B8%8E%E8%AF%AF%E5%88%A0%E6%81%A2%E5%A4%8D/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（八）数据安全与误删恢复
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-03-29 10:41:16" itemprop="dateCreated datePublished" datetime="2024-03-29T10:41:16+08:00">2024-03-29</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.7k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>数据安全这件事分两头。一头是写进去之后别丢：WAL 把随机写换成顺序写，代价是内存里攒下脏页，刷的时候可能让一条本来很快的语句突然变慢。另一头是删错了能找回来：delete 删的行、drop 掉的表、rm 掉的整个实例，恢复路径各不相同，能恢复到什么程度取决于备份和日志留了多久。再往前一步是运行时的边界——kill 不掉的语句卡在哪、全表扫描会不会把内存打爆。这篇把这几件事放一起，按「异常从哪来、能救回什么、代价多大」串一遍。</p>
+<span id="more"></span>
+
+<h2 id="刷脏页与抖动"><a href="#刷脏页与抖动" class="headerlink" title="刷脏页与抖动"></a>刷脏页与抖动</h2><p>更新语句走 WAL：改内存、写 redo log 就返回，数据页晚点再写回磁盘。内存页和磁盘页内容不一致时叫脏页，写回之后变成干净页。一条平时很快的语句偶尔慢一下，多半就是撞上了刷脏页。</p>
+<p>刷脏页有四个触发时机。redo log 写满了，系统要停掉所有更新、把 checkpoint 往前推，这期间更新数跌到 0，是最要避开的情形；内存不够用了，淘汰数据页时如果淘汰的是脏页，得先把它写回磁盘；系统空闲时后台见缝插针地刷；正常关闭时把所有脏页写回，下次启动才能直接读磁盘。前两种影响性能，后两种没人会在意。</p>
+<pre class="mermaid">
+flowchart TD
+    U[更新语句 改内存写 redo log] --&gt; D[产生脏页]
+    D --&gt; A{触发刷脏}
+    A --&gt;|redo log 写满| R[停更新 推进 checkpoint]
+    A --&gt;|内存不足淘汰| E[先写盘再复用]
+    A --&gt;|系统空闲| I[后台刷]
+    A --&gt;|正常关闭| C[全量刷回]
+    R --&gt; X[响应变慢]
+    E --&gt; X
+</pre>
+
+<p>刷多快由两个因素决定：脏页比例和 redo log 的写入进度。脏页比例 M 除以 <code>innodb_max_dirty_pages_pct</code> 算出一个 0 到 100 的值 F1，比例到了上限就是 100；当前写入序号与 checkpoint 序号的差 N 越大，F2 越大。取两者较大的 R，按 <code>innodb_io_capacity</code> 定义的能力乘以 R% 去刷。所以 <code>innodb_io_capacity</code> 必须设成磁盘真实的 IOPS——SSD 上还按默认值 300，刷脏速度会慢过脏页生成速度，脏页越积越多，TPS 就是上不去。可以用 fio 测出实际能力再设。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=<span class="variable">$filename</span> -direct=1 -iodepth 1 -thread -rw=randrw -ioengine=psync -bs=16k -size=500M -numjobs=10 -runtime=10 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+
+<p>脏页比例用 <code>Innodb_buffer_pool_pages_dirty</code> 除以 <code>Innodb_buffer_pool_pages_total</code> 查，平时别让它长期贴近上限。还有个放大器：刷一个脏页时，<code>innodb_flush_neighbors</code> 为 1 会把旁边的脏页一起带走，还能继续蔓延。机械盘年代这能省下大量随机 IO；SSD 上 IOPS 已足够高，连坐反而拖长响应时间，该把它设为 0。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">select</span> VARIABLE_VALUE <span class="keyword">into</span> <span class="variable">@a</span> <span class="keyword">from</span> performance_schema.global_status <span class="keyword">where</span> VARIABLE_NAME<span class="operator">=</span><span class="string">&#x27;Innodb_buffer_pool_pages_dirty&#x27;</span>;</span><br><span class="line"><span class="keyword">select</span> VARIABLE_VALUE <span class="keyword">into</span> <span class="variable">@b</span> <span class="keyword">from</span> performance_schema.global_status <span class="keyword">where</span> VARIABLE_NAME<span class="operator">=</span><span class="string">&#x27;Innodb_buffer_pool_pages_total&#x27;</span>;</span><br><span class="line"><span class="keyword">select</span> <span class="variable">@a</span><span class="operator">/</span><span class="variable">@b</span>;</span><br></pre></td></tr></table></figure>
+
+<h2 id="误删行与闪回"><a href="#误删行与闪回" class="headerlink" title="误删行与闪回"></a>误删行与闪回</h2><p>误删分四种：delete 删行、drop&#x2F;truncate 删表、drop database 删库、rm 删实例。传统高可用挡不住误删——主库上一条 drop table 会顺着 binlog 传到所有从库，整个集群一起执行。所以恢复能力只能靠备份加日志，复制帮不上忙。</p>
+<p>delete 删掉的行可以用 Flashback 闪回，前提是 binlog 用 row 格式且 <code>binlog_row_image</code> 为 FULL。原理是改写 binlog 里的 event：Write_rows 换成 Delete_rows，Delete_rows 换成 Write_rows，Update_rows 把改前改后的值对调。多个事务要倒序执行，把 (A)delete、(B)insert、(C)update 恢复成 reverse C、reverse B、reverse A。别在主库上直接跑，恢复出备份或找一台从库做临时库，确认过结果再导回主库——发现晚的时候，业务可能已经在误操作的基础上又改了别的数据，直接补几行会造成二次破坏。</p>
+<h2 id="误删库表与备份恢复"><a href="#误删库表与备份恢复" class="headerlink" title="误删库表与备份恢复"></a>误删库表与备份恢复</h2><p>drop 和 truncate 没有这条路径。即使配了 row 格式，这三类命令在 binlog 里仍记成 statement，只有一个语句原文，恢复不出数据。只能走全量备份加增量日志：取最近一次全量备份恢复出临时库，把备份时点之后的 binlog 除误操作那条外全部应用上去。没有 GTID 时用 <code>--stop-position</code> 和 <code>--start-position</code> 把 12 点那条语句前后两段分开应用；有 GTID 就把误操作的 GTID 设进 <code>gtid_next</code>，提交一个空事务，后面顺序应用时会自动跳过。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">set</span> gtid_next<span class="operator">=</span><span class="string">&#x27;gtid1&#x27;</span>;</span><br><span class="line"><span class="keyword">begin</span>;</span><br><span class="line"><span class="keyword">commit</span>;</span><br><span class="line"><span class="keyword">set</span> gtid_next<span class="operator">=</span>automatic;</span><br></pre></td></tr></table></figure>
+
+<p>mysqlbinlog 方案有两个短板：不能只解析一张表的日志，应用日志也只能单线程。加速办法是让临时库挂到线上备库下做从库，同步前用 <code>change replication filter replicate_do_table=(tbl_name)</code> 限定只同步那张表，就能用上并行复制。备库上缺的 binlog 可以从备份系统取回放回日志目录，改 master.index 后重启备库让它重新识别。恢复时间取决于备份周期和日志量，一周一备的实例在第六天误删，可能要按天恢复。核心业务可以搭延迟复制备库，<code>change master to master_delay=N</code> 让它落后主库 N 秒；一小时内发现误删，这条命令还没在延迟备库上执行，stop slave 后跳过它就能拿到数据，最多再追一小时。</p>
+<p>预防比恢复值钱。<code>sql_safe_updates</code> 设为 on，delete 和 update 忘了写 where、或者 where 里没有索引字段就会报错；代码上线前过 SQL 审计。账号分离，业务只给 DML 权限，DDL 走管理系统；删表先把表名改成带 <code>_to_be_deleted</code> 后缀，观察一段时间无影响再通过管理系统删，系统只认这个后缀。rm 删单个节点有 HA 兜底，选新主库后把这个节点恢复回来再接入；批量下线把整个集群删光，就只能靠跨机房甚至跨城市的备份。</p>
+<h2 id="kill-的边界"><a href="#kill-的边界" class="headerlink" title="kill 的边界"></a>kill 的边界</h2><p><code>kill query</code> 终止线程正在执行的语句，<code>kill connection</code> 断开连接。两者都谈不上”立刻停”：处理 kill 的线程只是把目标状态改成 KILL_QUERY 或 KILL_CONNECTION，再发一个信号，目标线程执行到埋点才检查状态、进入终止逻辑。处于锁等待时信号能把它唤醒，所以 kill 很快见效；但如果线程在循环里每 10 毫秒判断一次能不能进 InnoDB，进不去就 nanosleep，这个循环里根本没检查线程状态，kill query 就不起作用——<code>innodb_thread_concurrency</code> 不够时看到的正是这种场景。此时 <code>kill connection</code> 关掉网络连接，客户端会收到断连提示，可是 show processlist 里 Command 列仍显示 Killed，因为服务端那条语句还在等。</p>
+<pre class="mermaid">
+flowchart LR
+    K[执行 kill] --&gt; S[设置线程状态并发信号]
+    S --&gt; W{线程是否走到埋点}
+    W --&gt;|是| P[进入终止逻辑]
+    W --&gt;|否 如等待进入 InnoDB| B[继续等待 Killed 状态]
+    P --&gt; T{终止逻辑耗时}
+    T --&gt;|大事务回滚 大查询删临时文件| L[仍需等待]
+    T --&gt;|普通语句| F[结束]
+</pre>
+
+<p>另一类是终止逻辑本身耗时长：超大事务回滚要回收所有新数据版本；大查询生成的临时文件在文件系统压力大时删得慢；DDL 最后一阶段被 kill 也要清理临时文件。这些都显示为 Killed，只能等，或者通过改善环境加速——临时调大 <code>innodb_thread_concurrency</code>、停掉别的线程让出位置、降低系统 IO 压力。客户端按 Ctrl+C 并不会直接杀服务端线程，MySQL 是停等协议，客户端另起一个连接发 kill query 而已。被 killed 的事务一直回滚时，重启也省不掉回滚动作，让它自己跑完更快；如果它占着锁或 IO 影响别人，先做主备切换把流量挪走，再等它结束。</p>
+<h2 id="全表扫描与内存"><a href="#全表扫描与内存" class="headerlink" title="全表扫描与内存"></a>全表扫描与内存</h2><p>100G 内存扫 200G 表，不会把内存用光。逻辑备份本来就是整库扫描，真会吃光内存早就挂了。关键在于服务端不保存完整结果集：取一行写进 net_buffer，写满就发；发送函数返回 EAGAIN 或 WSAEWOULDBLOCK 说明本地网络栈写满，停下来等可写再继续。服务端为这个查询占用的内存最多是 <code>net_buffer_length</code> 那么大，socket send buffer 也不可能有 200G。</p>
+<p>代价落在时间上。客户端接收慢，结果发不出去，事务执行时间就拉长；show processlist 里 State 一直是 Sending to client，说明网络栈写满了。结果集不大时用 <code>mysql_store_result</code> 一次拿到本地内存；结果真的很大改用 <code>mysql_use_result</code> 边读边处理。要快速减少这类线程，可以调大 net_buffer_length。另一个常被误会的状态是 Sending data——它只表示语句正在执行，可能是执行器里的任意阶段，等锁时也会显示这个，跟发送数据没关系。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">show</span> processlist;</span><br><span class="line"><span class="keyword">show</span> engine innodb status;</span><br></pre></td></tr></table></figure>
+
+<p>引擎侧也不会让内存暴涨。Buffer Pool 既加速更新也加速查询，命中率在 <code>show engine innodb status</code> 的 Buffer pool hit rate 里看，稳定服务该在 99% 以上。全表扫描真正威胁的是命中率：朴素 LRU 下扫一张 200G 的历史表，会把业务热数据全淘汰出去，命中率骤降、磁盘压力上来。InnoDB 的改进是按 5:3 把链表分成 young 和 old 两段，新读入的页放进 old 区，只有在里面待够 <code>innodb_old_blocks_time</code> 之后再被访问，才移到头部。顺序扫描时同一页的多次访问间隔不到一秒，页始终留在 old 区、很快被淘汰，young 区不受影响。全表扫描仍耗 IO，业务高峰别在主库上跑。</p>
+<pre class="mermaid">
+flowchart LR
+    S[扫描冷表读入数据页] --&gt; O[放入 LRU 的 old 区]
+    O --&gt; C{一秒后是否被再次访问}
+    C --&gt;|否 顺序扫描的常见情况| E[留在 old 区并被淘汰]
+    C --&gt;|是| Y[移到 young 区]
+    Y --&gt; H[保护业务热数据命中率]
+</pre>
+
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>WAL 换来写性能，也带来脏页；刷脏速度由磁盘能力、脏页比例和 redo log 进度共同决定，SSD 上关掉邻居刷新。误删行靠 Flashback 改写 binlog，误删库表靠全量备份加日志，延迟备库能把恢复窗口压到分钟级，预防手段比恢复流程更值得投入。kill 只是设置状态，线程走到埋点才会停；全表扫描不会撑爆内存，却可能挤掉 Buffer Pool 里的热数据，改进 LRU 把冷扫描挡在 young 区之外。</p>
+<p><strong>参考</strong>：《MySQL 实战 45 讲》</p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/03/29/MySQL%EF%BC%88%E5%85%AB%EF%BC%89%E6%95%B0%E6%8D%AE%E5%AE%89%E5%85%A8%E4%B8%8E%E8%AF%AF%E5%88%A0%E6%81%A2%E5%A4%8D/" title="MySQL（八）数据安全与误删恢复">https://xssdpgy.github.io/2024/03/29/MySQL（八）数据安全与误删恢复/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E6%95%B0%E6%8D%AE%E6%81%A2%E5%A4%8D/" rel="tag"># 数据恢复</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" rel="prev" title="MySQL（七）主备一致与高可用">
+      <i class="fa fa-chevron-left"></i> MySQL（七）主备一致与高可用
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%88%B7%E8%84%8F%E9%A1%B5%E4%B8%8E%E6%8A%96%E5%8A%A8"><span class="nav-text">刷脏页与抖动</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%AF%AF%E5%88%A0%E8%A1%8C%E4%B8%8E%E9%97%AA%E5%9B%9E"><span class="nav-text">误删行与闪回</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%AF%AF%E5%88%A0%E5%BA%93%E8%A1%A8%E4%B8%8E%E5%A4%87%E4%BB%BD%E6%81%A2%E5%A4%8D"><span class="nav-text">误删库表与备份恢复</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#kill-%E7%9A%84%E8%BE%B9%E7%95%8C"><span class="nav-text">kill 的边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%85%A8%E8%A1%A8%E6%89%AB%E6%8F%8F%E4%B8%8E%E5%86%85%E5%AD%98"><span class="nav-text">全表扫描与内存</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'b9cc7db26d6b2400006d83772f985ed8',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

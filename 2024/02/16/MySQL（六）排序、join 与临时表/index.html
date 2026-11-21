@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言一条语句执行得慢，原因常常藏在中间过程里：排序时内存放不下要落磁盘，join 选错了算法反复扫表，group by 悄悄建了一张临时表，删掉一半数据后文件却一点没小。这些动作在 explain 里只留下几个 Extra 字段，看懂它们要把执行过程拆开。这篇按几条线走：表里的空洞怎么来、怎么收回去；count 为什么越数越慢；order by 有几种排法；join 的两套算法各自适合什么场景；内">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（六）排序、join 与临时表">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言一条语句执行得慢，原因常常藏在中间过程里：排序时内存放不下要落磁盘，join 选错了算法反复扫表，group by 悄悄建了一张临时表，删掉一半数据后文件却一点没小。这些动作在 explain 里只留下几个 Extra 字段，看懂它们要把执行过程拆开。这篇按几条线走：表里的空洞怎么来、怎么收回去；count 为什么越数越慢；order by 有几种排法；join 的两套算法各自适合什么场景；内">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-02-16T15:12:28.000Z">
+<meta property="article:modified_time" content="2024-02-16T15:12:28.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="查询优化">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（六）排序、join 与临时表 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（六）排序、join 与临时表
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-02-16 23:12:28" itemprop="dateCreated datePublished" datetime="2024-02-16T23:12:28+08:00">2024-02-16</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.7k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>一条语句执行得慢，原因常常藏在中间过程里：排序时内存放不下要落磁盘，join 选错了算法反复扫表，group by 悄悄建了一张临时表，删掉一半数据后文件却一点没小。这些动作在 explain 里只留下几个 Extra 字段，看懂它们要把执行过程拆开。这篇按几条线走：表里的空洞怎么来、怎么收回去；count 为什么越数越慢；order by 有几种排法；join 的两套算法各自适合什么场景；内部临时表什么时候出现，又该怎么绕开。</p>
+<span id="more"></span>
+
+<h2 id="表空间的空洞与重建"><a href="#表空间的空洞与重建" class="headerlink" title="表空间的空洞与重建"></a>表空间的空洞与重建</h2><p>一个 InnoDB 表的数据可以放在共享表空间，也可以独立成一个 <code>.ibd</code> 文件，由 <code>innodb_file_per_table</code> 控制。独立成文件更好管理：不需要这张表时，<code>drop table</code> 会直接删掉文件；放在共享表空间里，表删了，空间仍留在那里。</p>
+<p>删行删不掉文件大小，得从删除流程说起。InnoDB 的索引是 B+ 树，删掉一条记录时，引擎把这条记录标记为删除，位置留给之后落在同一范围的新记录复用，磁盘文件保持不变。整个数据页的记录都删光，这个页才标记为可复用，而且能复用到树上的任何位置。相邻两页利用率都很低时，数据会合并到其中一页，另一页空出来。所以 <code>delete from t</code> 执行完，所有数据页都变成可复用状态，文件一点没缩。这些占着位置又没被用的空间，就是空洞。</p>
+<p>空洞不只来自删除。按索引递增插入时索引紧凑，随机插入会触发页分裂：页满了再插一条，就申请新页搬一部分数据过去，原页末尾留下空洞。更新索引字段的值，等于删旧值再插新值，同样留洞。</p>
+<pre class="mermaid">
+flowchart LR
+    D[delete 删除记录] --&gt; M[标记为可复用]
+    I[随机插入] --&gt; P[页分裂]
+    P --&gt; M
+    U[更新索引字段] --&gt; M
+    M --&gt; H[空洞累积 文件不缩]
+    H --&gt; R[重建表]
+    R --&gt; S[文件收缩]
+</pre>
+
+<p>收缩的办法是重建表：新建一张结构相同的表，按主键递增顺序把数据从旧表读出来再插进去，新表没有那些空洞，主键索引更紧凑，最后换名替换。<code>alter table t engine=InnoDB</code> 做的就是这件事。早期流程是 server 层建临时表转存数据，整个过程不允许对原表更新。后来改成 InnoDB 内部建临时文件、扫描原表主键生成新 B+ 树，期间把增删改记进 row log，临时文件建好后再重放日志，最后替换数据文件。复制数据那段时间允许写入，所以对业务来说近似在线。</p>
+<p>启动时仍要拿 MDL 写锁，真正拷贝之前会退化成读锁：退化是为了让增删改继续，保留读锁是为了挡住别的线程同时做 DDL。Online 和 inplace 是两个容易混的概念。inplace 说的是数据挪动在引擎内部完成，server 层没建临时表；Online 说的是拷贝期间允许读写。Online 的 DDL 一定是 inplace，反过来不成立——给字段加全文索引就是 inplace 的，却会阻塞增删改。重建表要扫描全表并构建临时文件，很大的表会吃掉大量 IO 和 CPU，临时文件本身也占空间；磁盘只剩一点余量时，1TB 的表未必收得动。</p>
+<p>另外两个命令容易和重建混在一起：<code>analyze table</code> 只重新统计索引信息，不碰数据；<code>optimize table</code> 相当于重建再加一次统计。</p>
+<h2 id="count-为什么越来越慢"><a href="#count-为什么越来越慢" class="headerlink" title="count 为什么越来越慢"></a>count 为什么越来越慢</h2><p>MyISAM 把表的总行数存在磁盘上，<code>count(*)</code> 直接返回这个数字。InnoDB 没有这个快捷方式，它要把数据一行行读出来累加。原因在 MVCC：同一时刻的多个查询，因为各自的一致性视图不同，应该看到的行数也不同。每一行都得判断对当前会话是否可见，可见的才计入结果。三个会话并行，一个先开事务，一个开事务后插入一行，一个用单条语句插入一行，同一时刻发出 <code>count(*)</code>，拿到的数字可以各不相同。</p>
+<p>优化器在这里能省一点：<code>count(*)</code> 遍历哪棵索引树结果都一样，于是挑最小的那棵——普通索引树的叶子节点只存主键值，比主键树小得多。<code>show table status</code> 返回的 TABLE_ROWS 来自采样估算，误差可能到四成五成，不能拿来当精确行数用。</p>
+<p>页面要显示操作总数加最近 100 条记录，脱离了数据库自己存计数是常见做法。把计数放进缓存系统，插入时加一、删除时减一，读写都快，代价有两个。一是缓存重启可能丢更新，重启后得回数据库跑一次 <code>count(*)</code> 把值补回来。二是并发下逻辑不一致：先写数据表再改缓存，查询可能看到新记录却拿到旧计数；把顺序倒过来，又可能拿到新计数却查不到新记录。两套存储之间没有分布式事务，拿不到一致的视图。</p>
+<p>把计数放进数据库里单独一张计数表，插入记录和更新计数放在同一个事务中，就借到了事务的隔离性。更新事务没提交时，计数值的加一对查询会话还不可见，它看到的总数和最近 100 条记录自然对得上。</p>
+<pre class="mermaid">
+sequenceDiagram
+    participant W as 更新会话
+    participant T as 计数表 C
+    participant R as 查询会话
+    W-&gt;&gt;T: begin
+    W-&gt;&gt;W: 插入操作记录
+    W-&gt;&gt;T: 计数值加 1
+    R-&gt;&gt;T: 读计数值 看不到未提交的加 1
+    R-&gt;&gt;W: 读最近 100 条 看不到未提交记录
+    W-&gt;&gt;T: commit
+</pre>
+
+<p>几种 count 写法的效率有差别。<code>count(字段)</code> 要判断字段是否为 NULL，允许为 NULL 时还得把值取出来再判断；<code>count(主键 id)</code> 由引擎逐行取出 id 交给 server 层累加，涉及解析数据行和拷贝字段；<code>count(1)</code> 不取字段，server 层对每行放一个数字 1 累加；<code>count(*)</code> 专门优化过，不取值，直接按行累加。效率从低到高大致是 count(字段)、count(主键 id)、count(1) 约等于 count(*)。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">from</span> t;</span><br><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(id) <span class="keyword">from</span> t;</span><br><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(<span class="number">1</span>) <span class="keyword">from</span> t;</span><br><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(name) <span class="keyword">from</span> t;</span><br><span class="line"><span class="keyword">show</span> <span class="keyword">table</span> status <span class="keyword">like</span> <span class="string">&#x27;t&#x27;</span>;</span><br></pre></td></tr></table></figure>
+
+<h2 id="order-by-的排序路径"><a href="#order-by-的排序路径" class="headerlink" title="order by 的排序路径"></a>order by 的排序路径</h2><p>市民表按城市查名字，再按名字排序返回前 1000 条。city 上有索引，查询先通过它定位到满足条件的记录，再按主键回表取出需要的字段，放进每个线程独有的 sort_buffer，按 name 排序后取前 1000 行。这就是全字段排序。</p>
+<pre class="mermaid">
+flowchart LR
+    A[city 索引定位主键] --&gt; B[回表取 city name age]
+    B --&gt; C[存入 sort_buffer]
+    C --&gt; D{sort_buffer 装得下}
+    D --&gt;|是| E[内存快速排序]
+    D --&gt;|否| F[分块落临时文件 归并排序]
+    E --&gt; G[取前 1000 行返回]
+    F --&gt; G
+</pre>
+
+<p>排序要不要落磁盘，看数据量和 <code>sort_buffer_size</code> 的关系。内存放不下时用外部排序，把待排数据分成若干份，每份单独排序写进临时文件，再把这些有序文件归并成一个。打开 optimizer_trace 执行一遍语句，可以从 <code>number_of_tmp_files</code> 看到用了几个临时文件，<code>examined_rows</code> 记录参与排序的行数。</p>
+<p>一行要返回的字段很多时，sort_buffer 里能放下的行数就少，临时文件变多，排序性能下滑。单行长度超过 <code>max_length_for_sort_data</code> 时，MySQL 改用 rowid 排序：sort_buffer 里只放排序字段 name 和主键 id，排完序再按 id 回表取 city、name、age 返回。它省了排序时的内存，却多读了一次主键索引——limit 1000 就多读 1000 行。</p>
+<p>内存够用时优先全字段排序，排完直接从内存返回结果；只有担心单行太大拖慢排序，才切到 rowid。如果能让数据从索引里取出来时就已经按 name 有序，这两条路都可以省掉。</p>
+<p>建 <code>(city, name)</code> 联合索引后，树搜索定位到第一个 city&#x3D;’杭州’ 的记录，往后遍历时 name 天然递增，不需要临时表也不需要排序，扫够 1000 条就能停。再进一步，建 <code>(city, name, age)</code>，三个返回字段都在索引上，连回表也省了，explain 的 Extra 里出现 Using index。索引有维护代价，为每条查询都堆联合索引不划算。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> t <span class="keyword">add</span> index city_user(city, name);</span><br><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> t <span class="keyword">add</span> index city_user_age(city, name, age);</span><br><span class="line"><span class="keyword">select</span> city, name, age <span class="keyword">from</span> t <span class="keyword">where</span> city<span class="operator">=</span><span class="string">&#x27;杭州&#x27;</span> <span class="keyword">order</span> <span class="keyword">by</span> name limit <span class="number">1000</span>;</span><br></pre></td></tr></table></figure>
+
+<h2 id="join-算法与驱动表"><a href="#join-算法与驱动表" class="headerlink" title="join 算法与驱动表"></a>join 算法与驱动表</h2><p>两张表做 join，被驱动表的关联字段有索引时走 Index Nested-Loop Join：从驱动表读一行，取关联字段的值去被驱动表做树搜索，找到匹配的拼成结果，直到驱动表扫完。t1 有 100 行、t2 有 1000 行，这条语句扫 200 行就结束了。拆成应用层循环，先 <code>select * from t1</code> 再逐行 <code>select * from t2 where a=$R.a</code>，扫描行数一样，却要多执行 100 次语句，还要自己拼结果。有索引时直接用 join 更合适。</p>
+<p>驱动表选谁也有讲究。驱动表 N 行全扫，被驱动表每行要查两次树（关联索引加主键索引），整体代价近似 N + N×2×log₂M。N 的影响是线性的，M 只出现在对数里，所以让小表做驱动表。</p>
+<p>被驱动表没有索引时，MySQL 不会傻到逐行全扫被驱动表，而用 Block Nested-Loop Join：把驱动表的数据读进 join_buffer，再扫被驱动表，每行跟缓冲区里的数据比对。两表各扫一次，比较次数是两表行数的乘积，但比较在内存里完成，比反复读盘快。缓冲区放不下时会分段：装一段，扫一遍被驱动表，清空，再装下一段——被驱动表因此被扫多次。调大 <code>join_buffer_size</code> 能减少段数，这也是 join 慢时常见的调整项。</p>
+<p>判断是否踩到 BNL，看 explain 的 Extra 里有没有 Block Nested Loop。这种 join 在大表上代价很高：多次扫被驱动表占磁盘 IO，M×N 次比较占 CPU，反复扫冷表还会把 Buffer Pool 里的热数据挤出去，而且查询结束后命中率不会立刻恢复。</p>
+<p>优化方向是让 join 用上被驱动表的索引。NLJ 上可以叠加 Batched Key Access：先从驱动表批量取出若干行放进 join_buffer，一次传给被驱动表，配合 Multi-Range Read 把拿到的主键 id 在 read_rnd_buffer 里排序，再按递增顺序回表，把随机读变成接近顺序读。启用前要把相关优化开关打开。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">set</span> optimizer_switch<span class="operator">=</span><span class="string">&#x27;mrr=on,mrr_cost_based=off,batched_key_access=on&#x27;</span>;</span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t1 straight_join t2 <span class="keyword">on</span> (t1.a<span class="operator">=</span>t2.a);</span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t1 straight_join t2 <span class="keyword">on</span> (t1.a<span class="operator">=</span>t2.b);</span><br></pre></td></tr></table></figure>
+
+<p>不适合在业务大表上建索引的场合，可以用临时表中转：把被驱动表经条件过滤后的少量数据导进一张带索引的临时表，再让驱动表和它 join。过滤后只剩几千行时，建索引的成本落到临时表上，原本上亿次的内存比较变成几千次带索引查找。</p>
+<pre class="mermaid">
+flowchart LR
+    J[join 语句] --&gt; A{被驱动表有索引}
+    A --&gt;|有| N[NLJ 小表驱动]
+    A --&gt;|无| B{能加索引}
+    B --&gt;|能| K[BKA 批量传值加 MRR]
+    B --&gt;|不能| T[临时表中转并建索引]
+    T --&gt; K
+</pre>
+
+<h2 id="内部临时表与-group-by"><a href="#内部临时表与-group-by" class="headerlink" title="内部临时表与 group by"></a>内部临时表与 group by</h2><p>union 要取两个查询结果的并集并去掉重复行，执行时会建一张内存临时表，把第一个子查询的 1000 写进去，第二个子查询取到 1000 时因为主键冲突插不进去，取到 999 才能插入，最后从临时表逐行返回。这里的唯一性约束直接承担了去重。把 union 换成 union all，没有去重语义，两个子查询的结果直接发给客户端，临时表就消失了。</p>
+<p>group by 也会建临时表。<code>select id%10 as m, count(*) from t1 group by m</code> 建一张以 m 为主键、带计数列的内存临时表，扫描索引取出 id，算出 id%10，存在就给计数加一，不存在就插一行，扫完再按 m 排序输出。数据不要排序要求时加上 <code>order by null</code>，能省掉最后一步。内存临时表有大小上限，超过 <code>tmp_table_size</code> 会转成磁盘临时表，大表上的 group by 因此可能占用大量磁盘空间。</p>
+<p>让分组字段有序，就能去掉临时表。给 id%100 建一个生成列并加索引，索引上的取值天然有序，group by 变成从左到右顺序扫描、遇到新值就输出上一组的计数。这个句型不需要临时表，也不需要额外排序。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> t1 <span class="keyword">add</span> <span class="keyword">column</span> z <span class="type">int</span> generated always <span class="keyword">as</span>(id <span class="operator">%</span> <span class="number">100</span>), <span class="keyword">add</span> index(z);</span><br><span class="line"><span class="keyword">select</span> z, <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">as</span> c <span class="keyword">from</span> t1 <span class="keyword">group</span> <span class="keyword">by</span> z;</span><br><span class="line"><span class="keyword">select</span> id<span class="operator">%</span><span class="number">100</span> <span class="keyword">as</span> m, <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">as</span> c <span class="keyword">from</span> t1 <span class="keyword">group</span> <span class="keyword">by</span> m <span class="keyword">order</span> <span class="keyword">by</span> <span class="keyword">null</span>;</span><br><span class="line"><span class="keyword">select</span> SQL_BIG_RESULT id<span class="operator">%</span><span class="number">100</span> <span class="keyword">as</span> m, <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">as</span> c <span class="keyword">from</span> t1 <span class="keyword">group</span> <span class="keyword">by</span> m;</span><br></pre></td></tr></table></figure>
+
+<p>不方便建索引时，用 <code>SQL_BIG_RESULT</code> 提示优化器数据量很大，它会放弃临时表，把分组字段直接放进 sort_buffer 排序，得到一个有序数组，再从左到右统计每个值的出现次数。排序占内存，但省掉了一张不断扩容的二维表。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>delete 只标记空洞，收缩要靠重建表；count 逐行累加是 MVCC 的必然结果，自己计数要放进同一个事务里；排序优先全字段，单行过大才换 rowid，最省的路是让索引本身有序；join 能用被驱动表索引就用，用不上就转 BKA 或临时表，驱动表始终选过滤后数据量小的那个；临时表在需要二维结构和唯一约束时出现，group by 能靠有序索引绕开它。</p>
+<p><strong>参考</strong>：《MySQL 实战 45 讲》</p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/" title="MySQL（六）排序、join 与临时表">https://xssdpgy.github.io/2024/02/16/MySQL（六）排序、join 与临时表/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/" rel="tag"># 查询优化</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/" rel="prev" title="MySQL（五）优化器与慢查询排查">
+      <i class="fa fa-chevron-left"></i> MySQL（五）优化器与慢查询排查
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" rel="next" title="MySQL（七）主备一致与高可用">
+      MySQL（七）主备一致与高可用 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E8%A1%A8%E7%A9%BA%E9%97%B4%E7%9A%84%E7%A9%BA%E6%B4%9E%E4%B8%8E%E9%87%8D%E5%BB%BA"><span class="nav-text">表空间的空洞与重建</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#count-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%B6%8A%E6%9D%A5%E8%B6%8A%E6%85%A2"><span class="nav-text">count 为什么越来越慢</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#order-by-%E7%9A%84%E6%8E%92%E5%BA%8F%E8%B7%AF%E5%BE%84"><span class="nav-text">order by 的排序路径</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#join-%E7%AE%97%E6%B3%95%E4%B8%8E%E9%A9%B1%E5%8A%A8%E8%A1%A8"><span class="nav-text">join 算法与驱动表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%86%85%E9%83%A8%E4%B8%B4%E6%97%B6%E8%A1%A8%E4%B8%8E-group-by"><span class="nav-text">内部临时表与 group by</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'dca936ad0a5b49410e50712eeda99737',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

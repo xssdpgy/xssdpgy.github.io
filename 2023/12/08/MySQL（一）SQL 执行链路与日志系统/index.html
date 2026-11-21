@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言写了几年业务，SQL 大多能写对，但一条语句发进去之后在 MySQL 内部走过哪些地方，很多人说不太清。平时这层盲区没什么影响，语句返回结果正确就够了。等到碰上慢查询、锁等待，或者一次异常重启后发现数据对不上，缺了这层认识就容易靠猜——加个索引试试，重启一下看看。 这篇从两条最简单的语句入手。一条查询，看它从连接器到执行器经过哪些模块；一条更新，看它比查询多出来的两份日志，以及这两份日志怎么配">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（一）SQL 执行链路与日志系统">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/12/08/MySQL%EF%BC%88%E4%B8%80%EF%BC%89SQL%20%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E4%B8%8E%E6%97%A5%E5%BF%97%E7%B3%BB%E7%BB%9F/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言写了几年业务，SQL 大多能写对，但一条语句发进去之后在 MySQL 内部走过哪些地方，很多人说不太清。平时这层盲区没什么影响，语句返回结果正确就够了。等到碰上慢查询、锁等待，或者一次异常重启后发现数据对不上，缺了这层认识就容易靠猜——加个索引试试，重启一下看看。 这篇从两条最简单的语句入手。一条查询，看它从连接器到执行器经过哪些模块；一条更新，看它比查询多出来的两份日志，以及这两份日志怎么配">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2023-12-08T13:34:12.000Z">
+<meta property="article:modified_time" content="2023-12-08T13:34:12.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="存储引擎">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/12/08/MySQL%EF%BC%88%E4%B8%80%EF%BC%89SQL%20%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E4%B8%8E%E6%97%A5%E5%BF%97%E7%B3%BB%E7%BB%9F/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（一）SQL 执行链路与日志系统 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/12/08/MySQL%EF%BC%88%E4%B8%80%EF%BC%89SQL%20%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E4%B8%8E%E6%97%A5%E5%BF%97%E7%B3%BB%E7%BB%9F/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（一）SQL 执行链路与日志系统
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-12-08 21:34:12" itemprop="dateCreated datePublished" datetime="2023-12-08T21:34:12+08:00">2023-12-08</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.3k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>写了几年业务，SQL 大多能写对，但一条语句发进去之后在 MySQL 内部走过哪些地方，很多人说不太清。平时这层盲区没什么影响，语句返回结果正确就够了。等到碰上慢查询、锁等待，或者一次异常重启后发现数据对不上，缺了这层认识就容易靠猜——加个索引试试，重启一下看看。</p>
+<p>这篇从两条最简单的语句入手。一条查询，看它从连接器到执行器经过哪些模块；一条更新，看它比查询多出来的两份日志，以及这两份日志怎么配合，才能让重启后的数据还对得上。链路走通之后，后面讲索引、锁、事务时提到的很多判断才有落点。</p>
+<p>整个系列八篇，按下面的顺序展开：</p>
+<ul>
+<li>MySQL（一）SQL 执行链路与日志系统</li>
+<li>MySQL（二）事务隔离与 MVCC</li>
+<li>MySQL（三）索引——结构与设计取舍</li>
+<li>MySQL（四）锁机制——表锁、行锁与间隙锁</li>
+<li>MySQL（五）优化器与慢查询排查</li>
+<li>MySQL（六）排序、join 与临时表</li>
+<li>MySQL（七）主备一致与高可用</li>
+<li>MySQL（八）数据安全与误删恢复</li>
+</ul>
+<p>不必从头顺着读，哪篇的问题眼下更急，就从哪篇开始。</p>
+<span id="more"></span>
+
+<h2 id="查询链路的五个模块"><a href="#查询链路的五个模块" class="headerlink" title="查询链路的五个模块"></a>查询链路的五个模块</h2><p>MySQL 大体分两层。上面是 Server 层，连接器、查询缓存、分析器、优化器、执行器都在这里，日期、数学、加密这些内置函数，以及存储过程、触发器、视图，也都归它管。下面是存储引擎层，管数据的存和取，做成插件式，InnoDB、MyISAM、Memory 都能挂上来。建表时不指定引擎，默认就是 InnoDB。两层之间通过一组接口交互，改了存储引擎，上面那半截不用动。</p>
+<p>用一张最简单的表演示，只有一个主键 ID 和整型字段 c：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> T (ID <span class="type">int</span> <span class="keyword">primary</span> key, c <span class="type">int</span>);</span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> T <span class="keyword">where</span> ID <span class="operator">=</span> <span class="number">10</span>;</span><br></pre></td></tr></table></figure>
+
+<p>拿这条查询走一遍。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;客户端&quot;] --&gt; B[&quot;连接器&lt;br&#x2F;&gt;认证·权限·连接管理&quot;]
+    B --&gt; C{&quot;查询缓存命中?&quot;}
+    C --&gt;|命中| D[&quot;直接返回结果&quot;]
+    C --&gt;|未命中| E[&quot;分析器&lt;br&#x2F;&gt;词法·语法解析&quot;]
+    E --&gt; F[&quot;优化器&lt;br&#x2F;&gt;选索引·定join顺序&quot;]
+    F --&gt; G[&quot;执行器&lt;br&#x2F;&gt;校验权限·调引擎接口&quot;]
+    G --&gt; H[&quot;存储引擎&lt;br&#x2F;&gt;InnoDB&quot;]
+    H --&gt; I[&quot;结果集返回客户端&quot;]
+</pre>
+
+<p>连接器先接待客户端。TCP 握手之后校验用户名密码，通过后去权限表把权限读出来，这个连接后续的权限判断都以这份为准。这里有个容易踩的点：管理员改了某个用户的权限，已经建立的连接不受影响，得等新连接才用上新权限。连接完成后一直没有动作就是空闲状态，<code>show processlist</code> 里 Command 列显示 Sleep 的就是。空闲太久会被断开，由 <code>wait_timeout</code> 控制，默认 8 小时。</p>
+<p>建连接的成本不低，所以用量上偏向长连接。代价是执行期间临时用的内存挂在连接对象上，只有断开才释放，长连接攒多了内存涨得快，严重的会被系统杀掉，从外面看就是 MySQL 异常重启。两个常见的处理办法：用一段时间后主动断开重连；或者在跑完一个大查询后执行 <code>mysql_reset_connection</code> 把连接资源复位，这一步免去了重连和重新认证。</p>
+<p>查询缓存这一段值得单独说，因为它常被误会。语句和结果以键值对缓存在内存里，命中就直接返回，看起来很划算。问题是失效太频繁：只要对表有一次更新，这张表上所有缓存全部清空。更新稍微频繁一点，命中率就低得可怜，存进去还没用就被清掉了。它只适合那种长期不动的配置表。较新的版本干脆把查询缓存整块功能拿掉了，日常用法里可以按需关闭，只在确定要用的语句上显式打开。</p>
+<p>分析器负责弄明白语句要做什么。先做词法分析，把字符串识别出来——<code>select</code> 是查询关键字，<code>T</code> 是表名，<code>ID</code> 是列名；再做语法分析，按语法规则检查这条语句合不合法。语法出错会报 <code>You have an error in your SQL syntax</code>，提示里紧贴 <code>use near</code> 的就是出错位置。列不存在这类错误也在这个阶段报，比如表 T 没有 k 列却写了 <code>where k=1</code>，报 <code>Unknown column</code>，分析器在优化器之前就把它拦下了。</p>
+<p>优化器决定怎么做。表里有多个索引时选哪个，多表 join 时按什么顺序连，都是它的活。同一条语句的两种执行路径逻辑结果一样，效率可能差很多，优化器就是在这中间挑。</p>
+<p>执行器真正动手。开始先校验对这张表有没有权限，没有就返回 <code>ERROR 1142</code>。通过后打开表，按引擎定义调用对应的接口。如果 ID 列没索引，执行器就调引擎接口取第一行，判断 ID 值，不符合跳过，符合放进结果集，再取下一行，直到表尾。慢查询日志里的 <code>rows_examined</code> 记录扫描行数，就是执行器每次调引擎取数时累加出来的。要注意引擎内部一次调用可能扫了多行，所以这个值跟引擎实际扫描的行数未必相等。</p>
+<h2 id="redo-log-与-WAL"><a href="#redo-log-与-WAL" class="headerlink" title="redo log 与 WAL"></a>redo log 与 WAL</h2><p>更新语句前面那段链路和查询完全一样，连接器、分析器、优化器、执行器一个不落。区别在后面：更新还多出两份日志。</p>
+<p>先看第一份。如果每次更新都要直接写进磁盘，磁盘得先找到那条记录再改，找记录和改数据的成本都高。这个困境有个通俗的对照：柜台掌柜记赊账，账本密密麻麻几十页，每来一笔就翻出来找人、拨算盘、写回去，忙起来根本来不及。实用的做法是先在粉板上记一笔，打烊了再统一誊到账本。</p>
+<p>MySQL 用的就是这套思路，叫 WAL（Write-Ahead Logging）——先写日志，再写磁盘。具体到 InnoDB：一条记录要更新时，引擎先把改动写进 redo log（粉板），同时更新内存，这时更新就算完成了；随后在系统相对空闲的时候，再把操作落到磁盘（账本）。</p>
+<p>redo log 的大小是固定的，比如配成一组文件、写到末尾回到开头循环写。这里有两个位置概念：<code>write pos</code> 是当前写到的地方，一边写一边后移；<code>checkpoint</code> 是要擦除的地方，擦之前先把对应记录更新到数据文件。两者之间空着的部分还能接受新操作。<code>write pos</code> 追上 <code>checkpoint</code> 就意味着粉板写满了，此时得停下来推进 checkpoint、腾出空间，更新才能继续。</p>
+<p>正因为有 redo log，InnoDB 能保证异常重启前提交的记录不丢，这个能力叫 crash-safe。只要改动记在了粉板上或者账本上，哪怕中途停业，恢复之后也能凭这两处把账目对回来。</p>
+<h2 id="binlog-与两阶段提交"><a href="#binlog-与两阶段提交" class="headerlink" title="binlog 与两阶段提交"></a>binlog 与两阶段提交</h2><p>第二份日志在 Server 层，叫 binlog（归档日志）。它和 redo log 并存有历史原因：早期 MySQL 自带的引擎是 MyISAM，没有 crash-safe 能力，binlog 只用来归档。InnoDB 是后来以插件形式加进来的，光靠 binlog 保证不了崩溃恢复，于是自己又做了一套 redo log。</p>
+<p>两份日志的三点区别，是后面很多问题的根：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>redo log</th>
+<th>binlog</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>归属</td>
+<td>InnoDB 引擎特有</td>
+<td>Server 层实现，所有引擎可用</td>
+</tr>
+<tr>
+<td>内容</td>
+<td>物理日志，某数据页上做了什么改动</td>
+<td>逻辑日志，语句的原始逻辑</td>
+</tr>
+<tr>
+<td>写入</td>
+<td>固定大小，循环写、会覆盖</td>
+<td>追加写，写满切下一个文件，不覆盖</td>
+</tr>
+</tbody></table>
+<p>拿 <code>update T set c=c+1 where ID=2</code> 看完整流程。执行器先找引擎取 ID&#x3D;2 这一行：ID 是主键，引擎直接树搜索定位，数据页在内存就返回，不在就先从磁盘读进来。执行器把值加一得到新行，调引擎接口写入。引擎把新行更新到内存，同时把改动记进 redo log，并把这份日志标成 prepare，然后告诉执行器可以提交了。执行器生成这条操作的 binlog 写入磁盘，最后调引擎的提交接口，引擎把 redo log 改成 commit 状态，更新完成。</p>
+<p>中间把 redo log 的写入拆成 prepare 和 commit 两步，就是两阶段提交。它要解决的问题是两份日志之间的逻辑一致。用反证法看得最清楚。假设当前 c&#x3D;0，在写完第一份日志、第二份还没写完时崩了：</p>
+<ul>
+<li>先写 redo log 后写 binlog。redo log 写完崩溃重启，靠它能把数据恢复成 c&#x3D;1；但 binlog 里没有这条语句。之后拿这份 binlog 去恢复临时库，这一行就是 c&#x3D;0，和原库对不上。</li>
+<li>先写 binlog 后写 redo log。binlog 写完崩溃，redo log 还没写，这个事务在崩溃恢复时无效，原库是 c&#x3D;0；可 binlog 里已经记了「c 从 0 改成 1」，拿它恢复出来的临时库又成了 c&#x3D;1，还是对不上。</li>
+</ul>
+<p>两种顺序都会让数据库本身的状态和用日志恢复出来的状态不一致。两阶段提交让 redo log 和 binlog 对事务提交状态达成一致，避开这个裂缝。它的用处不止误删后的恢复——加备库扩容时常见的做法是全量备份加应用 binlog，这里的不一致会直接变成线上主从数据不同。</p>
+<h2 id="刷盘参数与崩溃恢复"><a href="#刷盘参数与崩溃恢复" class="headerlink" title="刷盘参数与崩溃恢复"></a>刷盘参数与崩溃恢复</h2><p>前面说「redo log 和 binlog 持久化到磁盘就能恢复」，还有个前提没交代：这两份日志自己怎么才算真正写进磁盘。</p>
+<p>先看 binlog。事务执行中先写进 binlog cache，提交时再把整个事务一次性写进 binlog 文件——一个事务的 binlog 不能拆开。cache 每个线程一份，大小由 <code>binlog_cache_size</code> 控制，超过就暂存到磁盘；所有线程共用同一个 binlog 文件。写盘分两步：<code>write</code> 只把日志写进文件系统的 page cache，速度快；<code>fsync</code> 完成真正的持久化，磁盘 IOPS 主要花在这里。时机由 <code>sync_binlog</code> 控制：</p>
+<table>
+<thead>
+<tr>
+<th>取值</th>
+<th>行为</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td>每次提交只 write</td>
+<td>主机异常重启丢全部未 fsync 的 binlog</td>
+</tr>
+<tr>
+<td>1</td>
+<td>每次提交都 fsync</td>
+<td>每次提交多一次刷盘</td>
+</tr>
+<tr>
+<td>N&gt;1</td>
+<td>累积 N 个事务再 fsync</td>
+<td>异常重启丢最近 N 个事务的 binlog</td>
+</tr>
+</tbody></table>
+<p>有 IO 瓶颈时把 <code>sync_binlog</code> 调大能提升性能，常见取值在 100 到 1000 之间，一般不设 0。</p>
+<p>redo log 有类似的三种状态：在 redo log buffer 里（进程内存）、write 到 page cache 但没 fsync、真正持久化到磁盘。写进 buffer 很快，write 也快，持久化慢得多。<code>innodb_flush_log_at_trx_commit</code> 控制提交时的策略：设 0 只留在 buffer，设 1 直接持久化，设 2 只写到 page cache。另外有个后台线程每秒把 buffer 里的内容 write 再 fsync 一遍，所以未提交事务的 redo log 也可能已经落盘；buffer 用到一半、或者别的事务提交搭便车时，也会带出去。</p>
+<p>通常说的「双 1」，指 <code>sync_binlog</code> 和 <code>innodb_flush_log_at_trx_commit</code> 都设成 1，一个事务完整提交要等两次刷盘。既然如此，看到 TPS 两万、磁盘能力也才两万，为什么没成为瓶颈？靠的是组提交。LSN（日志逻辑序列号）单调递增，对应 redo log 的一个个写入点。并发的多个事务在准备阶段各自写完 buffer，第一个到达的被选为 leader，等它真正写盘时，组里已经攒了几个事务，leader 带着最大的 LSN 一次性落盘，LSN 更小的成员直接跟着返回。组成员越多，摊到每个事务的 IOPS 越少。为了让组里多攒几个，MySQL 还会把 redo log 的 fsync 时机往后拖到 binlog 写完——用一点响应时间换更少的刷盘次数，这部分由 <code>binlog_group_commit_sync_delay</code> 和 <code>binlog_group_commit_sync_no_delay_count</code> 控制。</p>
+<p>回头看 WAL 为什么能减少磁盘写：一是 redo log 和 binlog 都顺序写，比随机写快；二是组提交把多次 fsync 合并了。如果 IO 已经成了瓶颈，可选的手段和代价是：调那两个 binlog 组提交参数（增加响应时间，不丢数据）；<code>sync_binlog</code> 调到大于 1（掉电丢 binlog）；<code>innodb_flush_log_at_trx_commit</code> 设成 2（掉电丢数据）。最后这个不建议设 0——设 0 时日志只在内存，MySQL 自己重启就丢，而设 2 只是进 page cache、速度相差不大，异常重启却不会丢。</p>
+<h2 id="执行链路速查"><a href="#执行链路速查" class="headerlink" title="执行链路速查"></a>执行链路速查</h2><table>
+<thead>
+<tr>
+<th>现象或需求</th>
+<th>先看哪里</th>
+<th>处理方向</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>改了权限没生效</td>
+<td>现有连接权限是建连时读的</td>
+<td>新建连接才用新权限</td>
+</tr>
+<tr>
+<td>长连接后内存飞涨</td>
+<td>临时内存挂在连接对象上</td>
+<td>定期断开或用连接复位</td>
+</tr>
+<tr>
+<td>查询缓存命中率低</td>
+<td>表上有更新就全量失效</td>
+<td>关闭，仅静态表按需开启</td>
+</tr>
+<tr>
+<td>列不存在报 Unknown column</td>
+<td>分析器阶段</td>
+<td>检查 SQL 里的列名</td>
+</tr>
+<tr>
+<td>崩溃后数据对不上</td>
+<td>redo log 与 binlog 是否一致</td>
+<td>确认两阶段提交、双 1 配置</td>
+</tr>
+<tr>
+<td>IO 到瓶颈</td>
+<td>write 与 fsync 的次数</td>
+<td>组提交参数，权衡掉电丢数据风险</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>把链路和日志放在一篇里讲，是因为它们连着同一条主线：一条语句从客户端进去、落到磁盘，中间经过的每个模块都在为「正确」和「快」做取舍。查询缓存为快而生，却因失效太猛被弃用；两份日志为正确而生，靠两阶段提交和刷盘参数兜底，又要靠组提交把性能找回来。后面几篇展开的索引、锁、事务，都是在这条链路上继续往细里看。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《MySQL 实战 45 讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/12/08/MySQL%EF%BC%88%E4%B8%80%EF%BC%89SQL%20%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E4%B8%8E%E6%97%A5%E5%BF%97%E7%B3%BB%E7%BB%9F/" title="MySQL（一）SQL 执行链路与日志系统">https://xssdpgy.github.io/2023/12/08/MySQL（一）SQL 执行链路与日志系统/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E5%AD%98%E5%82%A8%E5%BC%95%E6%93%8E/" rel="tag"># 存储引擎</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/11/20/%E9%A1%B9%E7%9B%AE%E7%AE%A1%E7%90%86%EF%BC%88%E5%9B%9B%EF%BC%89%E9%9D%9E%E8%81%8C%E6%9D%83%E6%B2%9F%E9%80%9A%E2%80%94%E2%80%94%E5%90%91%E4%B8%8A%E3%80%81%E8%B7%A8%E9%83%A8%E9%97%A8%E4%B8%8E%E5%90%91%E4%B8%8B/" rel="prev" title="项目管理（四）非职权沟通——向上、跨部门与向下">
+      <i class="fa fa-chevron-left"></i> 项目管理（四）非职权沟通——向上、跨部门与向下
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/12/15/MySQL%EF%BC%88%E4%BA%8C%EF%BC%89%E4%BA%8B%E5%8A%A1%E9%9A%94%E7%A6%BB%E4%B8%8E%20MVCC/" rel="next" title="MySQL（二）事务隔离与 MVCC">
+      MySQL（二）事务隔离与 MVCC <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%9F%A5%E8%AF%A2%E9%93%BE%E8%B7%AF%E7%9A%84%E4%BA%94%E4%B8%AA%E6%A8%A1%E5%9D%97"><span class="nav-text">查询链路的五个模块</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#redo-log-%E4%B8%8E-WAL"><span class="nav-text">redo log 与 WAL</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#binlog-%E4%B8%8E%E4%B8%A4%E9%98%B6%E6%AE%B5%E6%8F%90%E4%BA%A4"><span class="nav-text">binlog 与两阶段提交</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%88%B7%E7%9B%98%E5%8F%82%E6%95%B0%E4%B8%8E%E5%B4%A9%E6%BA%83%E6%81%A2%E5%A4%8D"><span class="nav-text">刷盘参数与崩溃恢复</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%89%A7%E8%A1%8C%E9%93%BE%E8%B7%AF%E9%80%9F%E6%9F%A5"><span class="nav-text">执行链路速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '5b1985a05e30d69bb39f45bd06826476',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

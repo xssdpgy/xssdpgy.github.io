@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言一条语句卡住，屏幕上只显示 Waiting for lock，具体在等谁、锁的范围有多大，往往要靠猜。MySQL 的锁分散在几个层次：备份时要锁整个实例，改表结构会碰到元数据锁，更新同一行是行锁，范围查询还会带上间隙锁。这些锁各有触发场景，也各有代价。这篇按锁的粒度从大到小走一遍，把每种锁解决什么问题、什么时候会互相挡路讲清楚，最后落到 next-key lock 的加锁规则，让一条语句该锁多">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（四）锁机制——表锁、行锁与间隙锁">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言一条语句卡住，屏幕上只显示 Waiting for lock，具体在等谁、锁的范围有多大，往往要靠猜。MySQL 的锁分散在几个层次：备份时要锁整个实例，改表结构会碰到元数据锁，更新同一行是行锁，范围查询还会带上间隙锁。这些锁各有触发场景，也各有代价。这篇按锁的粒度从大到小走一遍，把每种锁解决什么问题、什么时候会互相挡路讲清楚，最后落到 next-key lock 的加锁规则，让一条语句该锁多">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-01-21T12:52:41.000Z">
+<meta property="article:modified_time" content="2024-01-21T12:52:41.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="锁">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（四）锁机制——表锁、行锁与间隙锁 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（四）锁机制——表锁、行锁与间隙锁
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-01-21 20:52:41" itemprop="dateCreated datePublished" datetime="2024-01-21T20:52:41+08:00">2024-01-21</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>一条语句卡住，屏幕上只显示 Waiting for lock，具体在等谁、锁的范围有多大，往往要靠猜。MySQL 的锁分散在几个层次：备份时要锁整个实例，改表结构会碰到元数据锁，更新同一行是行锁，范围查询还会带上间隙锁。这些锁各有触发场景，也各有代价。这篇按锁的粒度从大到小走一遍，把每种锁解决什么问题、什么时候会互相挡路讲清楚，最后落到 next-key lock 的加锁规则，让一条语句该锁多大范围能推算出来。</p>
+<span id="more"></span>
+
+<h2 id="全局锁与元数据锁"><a href="#全局锁与元数据锁" class="headerlink" title="全局锁与元数据锁"></a>全局锁与元数据锁</h2><p>全局锁锁的是整个数据库实例。MySQL 提供的命令是 <code>flush tables with read lock</code>（FTWRL），执行之后整个库进入只读：增删改、建表改表、更新类事务的提交都会被阻塞。它的典型用途是全库逻辑备份——把每张表都查出来存成文本，如果备份期间有写入，各表备份的时点就不一致。举个常见的例子：先备份账户余额表，用户买课扣了余额并写入课程表，再备份课程表，备份结果就成了钱没扣、课多了，拿这份数据恢复，账就对不上。</p>
+<p>备份真正需要的是一致性视图，禁止写入只是拿到它的手段之一。可重复读隔离级别下开启一个事务就能拿到这个视图，所以 <code>mysqldump --single-transaction</code> 在导数据前先启动事务，靠 MVCC 保证备份过程中数据照常更新。这个办法只适用于所有表都用事务引擎的库；一旦有 MyISAM 这类不支持事务的表，备份时读到的总是最新数据，一致性被破坏，这时还得退回 FTWRL。也有 <code>set global readonly=true</code> 能让全库只读，一般不推荐：readonly 的值常被用来判断主备角色，影响面更大；客户端异常断开时，FTWRL 会自动释放锁，readonly 却会一直留着，把库卡在不可写状态。</p>
+<p>表级锁有两种。一种是显式表锁 <code>lock tables ... read/write</code>，除了限制别的线程，也限定本线程接下来能访问哪些表，所以在支持行锁的 InnoDB 上基本不用它。另一种是元数据锁（MDL），访问表时自动加上，用来防止查询遍历到一半表结构被改。增删改查加 MDL 读锁，改表结构加 MDL 写锁；读锁之间不互斥，读写锁之间和写锁之间互斥。</p>
+<p>MDL 有个常见的坑：给小表加字段，整个库挂住。事务拿到 MDL 读锁后，要等事务提交才释放，语句结束并不释放。如果一个长事务占着表 t 的读锁，另一个会话要加字段申请写锁，就会被阻塞；更要命的是，写锁排在最前面之后，后续所有针对 t 的增删改查申请读锁，也都会被这个等写锁的会话挡住，这张表彻底不可读写。查询一频繁、客户端一重试，连接很快被打满。</p>
+<p>处理方式分两种。表上有长事务时，先查 <code>information_schema.innodb_trx</code>，暂停 DDL 或 kill 掉长事务。表是热点、请求不断、kill 完马上又有新请求进来时，用带超时的方式加字段，拿不到锁就先放弃，之后再重试：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> t wait <span class="number">5</span> <span class="keyword">add</span> <span class="keyword">column</span> c <span class="type">int</span>;</span><br><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> t nowait <span class="keyword">add</span> <span class="keyword">column</span> c <span class="type">int</span>;</span><br></pre></td></tr></table></figure>
+
+<h2 id="两阶段锁与死锁"><a href="#两阶段锁与死锁" class="headerlink" title="两阶段锁与死锁"></a>两阶段锁与死锁</h2><p>行锁是引擎层实现的，InnoDB 支持，MyISAM 不支持——后者同一张表任何时刻只能有一个更新在执行，并发度上不去。InnoDB 的行锁遵守两阶段锁协议：锁在需要的时候才加上，但不会用完立刻释放，一直持有到事务提交或回滚。</p>
+<p>这条规则直接影响事务里语句的顺序。设想一个买票交易：扣顾客余额、给影院账户加钱、写一条交易日志。多个顾客同时在同一家影院买票，冲突点在影院账户那一行。按两阶段锁协议，三个操作的锁都要等到提交才释放，所以把更新影院余额的语句放到最后，这一行的锁持有时间最短，事务之间的等待也最少。原则是：事务里要锁多行时，把最可能造成冲突的锁往后放。</p>
+<p>即使调整了顺序，死锁仍然可能发生。两个事务互相拿着对方要的行锁，就进入循环等待：</p>
+<pre class="mermaid">
+flowchart LR
+    A[&quot;事务 A&lt;br&#x2F;&gt;持有 id&#x3D;1 的行锁&quot;] --&gt;|&quot;等待 id&#x3D;2&quot;| B[&quot;事务 B&lt;br&#x2F;&gt;持有 id&#x3D;2 的行锁&quot;]
+    B --&gt;|&quot;等待 id&#x3D;1&quot;| A
+</pre>
+
+<p>死锁有两种处理方式。等超时由 <code>innodb_lock_wait_timeout</code> 控制，默认 50 秒，在线服务等不起；把它调成 1 秒又会让普通的锁等待被误伤。另一种是主动死锁检测，<code>innodb_deadlock_detect</code> 默认开启，发现循环等待后挑一个事务回滚，让其他事务继续。</p>
+<p>检测本身有代价。每个被堵住的线程都要判断它加入后会不会形成环，这是个 O(n) 的操作。一千个线程同时更新同一行，检测要跑到百万量级，虽然最后判定没有死锁，CPU 已经被吃掉——表现就是 CPU 接近满载，每秒却提交不了几个事务。缓解方向是减少访问同一资源的并发量：在服务端对相同行的更新排队，或者把一个热点账户拆成多条记录，总额取各条之和，每次随机选一条更新，冲突概率降到几分之一。拆行要考虑余额减少时的边界，某条记录扣到零之后代码得绕开它。</p>
+<p>从 <code>show engine innodb status</code> 的 LAST DETECTED DEADLOCK 一段能读出现场：哪个事务在等哪把锁，哪个事务持有哪些锁。<code>lock_mode X waiting</code> 是 next-key lock，<code>locks rec but not gap</code> 是纯行锁，<code>locks gap before rec</code> 是纯间隙锁。两条语句锁同一组资源却顺序相反，就容易死锁；回滚时 InnoDB 挑持有资源少、成本低的那个事务。</p>
+<h2 id="next-key-lock-规则"><a href="#next-key-lock-规则" class="headerlink" title="next-key lock 规则"></a>next-key lock 规则</h2><p>gap lock 锁的是记录之间的间隙，防止往间隙里插入新行。行锁和间隙锁合起来是 next-key lock，前开后闭。加锁规则可以压成两条原则、两条优化和一个特例：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>原则一</td>
+<td>加锁的基本单位是 next-key lock，前开后闭区间</td>
+</tr>
+<tr>
+<td>原则二</td>
+<td>查找过程中访问到的对象才会加锁</td>
+</tr>
+<tr>
+<td>优化一</td>
+<td>等值查询命中唯一索引时，next-key lock 退化为行锁</td>
+</tr>
+<tr>
+<td>优化二</td>
+<td>等值查询向右遍历，最后一个值不满足条件时，退化为间隙锁</td>
+</tr>
+<tr>
+<td>特例</td>
+<td>唯一索引上的范围查询，会访问到第一个不满足条件的记录为止</td>
+</tr>
+</tbody></table>
+<p>这套规则在可重复读隔离级别下讨论，间隙锁也只有这个级别才生效。用下面这张表走几个案例：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> t (</span><br><span class="line">  id <span class="type">int</span> <span class="keyword">not</span> <span class="keyword">null</span> <span class="keyword">primary</span> key,</span><br><span class="line">  c <span class="type">int</span> <span class="keyword">default</span> <span class="keyword">null</span>,</span><br><span class="line">  d <span class="type">int</span> <span class="keyword">default</span> <span class="keyword">null</span>,</span><br><span class="line">  key c(c)</span><br><span class="line">) engine<span class="operator">=</span>InnoDB;</span><br><span class="line"></span><br><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> t <span class="keyword">values</span>(<span class="number">0</span>,<span class="number">0</span>,<span class="number">0</span>),(<span class="number">5</span>,<span class="number">5</span>,<span class="number">5</span>),(<span class="number">10</span>,<span class="number">10</span>,<span class="number">10</span>),</span><br><span class="line">  (<span class="number">15</span>,<span class="number">15</span>,<span class="number">15</span>),(<span class="number">20</span>,<span class="number">20</span>,<span class="number">20</span>),(<span class="number">25</span>,<span class="number">25</span>,<span class="number">25</span>);</span><br></pre></td></tr></table></figure>
+
+<p>先等值查一个不存在的 id&#x3D;7：本该加 next-key lock (5,10]，向右遍历时发现 id&#x3D;10 不满足等值条件，按优化二退化成间隙锁 (5,10)。于是别人往这个间隙插 id&#x3D;8 会被挡住，改 id&#x3D;10 这行却可以。</p>
+<p>唯一索引上的等值查询命中记录时用优化一。主键上 <code>where id=10 for update</code> 只加 id&#x3D;10 的行锁；而 <code>where id&gt;=10 and id&lt;11 for update</code> 逻辑上等价，加锁却分成两段：定位 id&#x3D;10 时按等值查询退化为行锁，向右扫描到 id&#x3D;15 停下，加 next-key lock (10,15]。非唯一索引没有优化一，<code>where c=10 for update</code> 会在 c 索引上加 (5,10] 和 (10,15) 两段，因为 c 值可能重复，必须向右扫到 c&#x3D;15 才能确认没有更多 c&#x3D;10。</p>
+<p>一个容易忽略的点：锁是加在索引上的，而且是一条一条加上去的。<code>select c from t where c=5 lock in share mode</code> 用覆盖索引，只访问 c 索引，主键索引上不加锁，此时别的会话仍能更新这一行；换成 <code>select *</code>，或者查询里带上 c 索引没有的字段，就得回主键树，主键上也加了锁。<code>order by</code> 的方向还会改变加锁顺序，<code>c in (5,20,10)</code> 正序是先锁 c&#x3D;5 再锁 c&#x3D;20，倒序反过来，两个会话并发执行时就可能互相卡住。</p>
+<h2 id="加锁案例推演"><a href="#加锁案例推演" class="headerlink" title="加锁案例推演"></a>加锁案例推演</h2><p>再看几个把规则用得更深的场景，重点是理解”间隙由谁定义”。间隙锁锁住的是两个记录之间的空隙，而空隙是由它右边那条记录决定的。删掉 id&#x3D;10 之后，原本的 (5,10) 和 (10,15) 合并成 (5,15)——右边那条记录变成了 id&#x3D;15。所以删除记录会让别的会话持有的加锁范围”变大”，虽然它什么都没做。更新索引字段也是同理：把 c&#x3D;5 改成 c&#x3D;1，在索引上相当于删除 (c&#x3D;5,id&#x3D;5) 再插入 (c&#x3D;1,id&#x3D;5)，间隙的边界随之移动，之后再想把这行改回 c&#x3D;5，插入动作会撞进别人已经锁住的间隙，被堵住。</p>
+<p>范围查询加 <code>order by desc</code> 时，优化器要先找”第一个小于目标值”的记录。找的过程其实是拿目标值做一次等值定位：<code>where id&gt;9 and id&lt;12 order by id desc for update</code> 先定位 id&#x3D;12，没找到，落在 (10,15) 这个间隙，加间隙锁 (10,15)；再向左遍历，扫到 id&#x3D;5 停下，加 next-key lock (0,5] 和 (5,10]。写法上是不等号，定位阶段用的却是等值查询的规则。</p>
+<p>删除数据时加 limit 能缩小加锁范围。表里有两条 c&#x3D;10 的记录，<code>delete from t where c=10</code> 会一直向右扫到 c&#x3D;15，锁住 (5,10] 和 (10,15)；加上 <code>limit 2</code> 后，凑够两条就停，锁只到 (c&#x3D;10,id&#x3D;30)，后面的间隙不锁，别的会话往 c&#x3D;12 插记录就能成功。limit 一方面控制删除条数，一方面减少锁住的范围，删除操作值得加上它。</p>
+<pre class="mermaid">
+flowchart LR
+    subgraph FULL[&quot;delete where c&#x3D;10&quot;]
+    direction TB
+    F1[&quot;扫描到 c&#x3D;15 才停&quot;] --&gt; F2[&quot;锁 (5,10] 与 (10,15)&quot;]
+    F2 --&gt; F3[&quot;c&#x3D;12 的插入被挡住&quot;]
+    end
+    subgraph LIMIT[&quot;delete where c&#x3D;10 limit 2&quot;]
+    direction TB
+    L1[&quot;凑够 2 条就停&quot;] --&gt; L2[&quot;锁只到 (c&#x3D;10,id&#x3D;30)&quot;]
+    L2 --&gt; L3[&quot;c&#x3D;12 的插入可以通过&quot;]
+    end
+</pre>
+
+<p>读提交隔离级别下没有间隙锁，只剩行锁；语句执行完，不满足条件的行上的锁会立刻释放，不必等到事务提交。锁的范围更小、时间更短，这是不少业务默认用读提交的原因。可重复读下要用 next-key lock 解决幻读，就得接受更大的锁范围，在写语句时按规则算清楚代价。</p>
+<h2 id="锁机制速查"><a href="#锁机制速查" class="headerlink" title="锁机制速查"></a>锁机制速查</h2><table>
+<thead>
+<tr>
+<th>现象或需求</th>
+<th>背后的机制</th>
+<th>处理方向</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>备份时各表数据对不上</td>
+<td>备份时点不一致</td>
+<td>事务引擎用 single-transaction，否则 FTWRL</td>
+</tr>
+<tr>
+<td>加字段把库堵住</td>
+<td>MDL 写锁排在读锁后面，挡住后续请求</td>
+<td>查 innodb_trx 处理长事务，DDL 带超时</td>
+</tr>
+<tr>
+<td>热点行更新 CPU 高、事务少</td>
+<td>死锁检测在大量并发下开销陡增</td>
+<td>服务端排队，或把一行拆成多行</td>
+</tr>
+<tr>
+<td>事务锁等待时间长</td>
+<td>两阶段锁，锁持有到提交</td>
+<td>把最可能冲突的语句往后放</td>
+</tr>
+<tr>
+<td>只改一行却挡住插入</td>
+<td>next-key lock 覆盖记录与间隙</td>
+<td>按加锁规则算范围，等值命中唯一索引退化为行锁</td>
+</tr>
+<tr>
+<td>删除记录后锁范围变大</td>
+<td>间隙由右边的记录定义</td>
+<td>注意相邻间隙合并</td>
+</tr>
+<tr>
+<td>删除想缩小加锁范围</td>
+<td>扫描到不满足条件才停</td>
+<td>delete 带 limit</td>
+</tr>
+</tbody></table>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>锁的粒度决定了冲突的范围：全局锁停掉整个实例，MDL 保护表结构，行锁和间隙锁作用在索引上。两阶段锁协议让锁的释放时机被绑在事务边界上，死锁检测则把循环依赖转成一次回滚。next-key lock 的规则看着细，核心只有两点——按访问到的索引对象加锁，按查找方式判断区间是否退化。把这两点套进具体语句，锁的范围就能推算出来。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>《MySQL 实战 45 讲》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/" title="MySQL（四）锁机制——表锁、行锁与间隙锁">https://xssdpgy.github.io/2024/01/21/MySQL（四）锁机制——表锁、行锁与间隙锁/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E9%94%81/" rel="tag"># 锁</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2024/01/10/MySQL%EF%BC%88%E4%B8%89%EF%BC%89%E7%B4%A2%E5%BC%95%E2%80%94%E2%80%94%E7%BB%93%E6%9E%84%E4%B8%8E%E8%AE%BE%E8%AE%A1%E5%8F%96%E8%88%8D/" rel="prev" title="MySQL（三）索引——结构与设计取舍">
+      <i class="fa fa-chevron-left"></i> MySQL（三）索引——结构与设计取舍
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/" rel="next" title="MySQL（五）优化器与慢查询排查">
+      MySQL（五）优化器与慢查询排查 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%85%A8%E5%B1%80%E9%94%81%E4%B8%8E%E5%85%83%E6%95%B0%E6%8D%AE%E9%94%81"><span class="nav-text">全局锁与元数据锁</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%A4%E9%98%B6%E6%AE%B5%E9%94%81%E4%B8%8E%E6%AD%BB%E9%94%81"><span class="nav-text">两阶段锁与死锁</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#next-key-lock-%E8%A7%84%E5%88%99"><span class="nav-text">next-key lock 规则</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8A%A0%E9%94%81%E6%A1%88%E4%BE%8B%E6%8E%A8%E6%BC%94"><span class="nav-text">加锁案例推演</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%94%81%E6%9C%BA%E5%88%B6%E9%80%9F%E6%9F%A5"><span class="nav-text">锁机制速查</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '573b0017ef638377ef31955e1fc50c8b',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

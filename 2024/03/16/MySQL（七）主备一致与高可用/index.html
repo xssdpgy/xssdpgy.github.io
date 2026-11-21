@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言主库写一份数据，备库怎么跟上；主库挂了谁来接；接完以后，读请求打到从库会不会读到旧值。三件事串起来就是高可用。MySQL 的绝大部分高可用方案都长在一主一备这棵树上，树根是 binlog。这篇从 binlog 的内容和同步链路讲起，看主备延迟从哪来、切换时拿可靠性还是可用性换；再看备库怎么并行追日志、GTID 怎么替代位点；最后落到读写分离的过期读和实例健康检测——这两处最容易在表面正常的系统">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（七）主备一致与高可用">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言主库写一份数据，备库怎么跟上；主库挂了谁来接；接完以后，读请求打到从库会不会读到旧值。三件事串起来就是高可用。MySQL 的绝大部分高可用方案都长在一主一备这棵树上，树根是 binlog。这篇从 binlog 的内容和同步链路讲起，看主备延迟从哪来、切换时拿可靠性还是可用性换；再看备库怎么并行追日志、GTID 怎么替代位点；最后落到读写分离的过期读和实例健康检测——这两处最容易在表面正常的系统">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-03-16T13:05:49.000Z">
+<meta property="article:modified_time" content="2024-03-16T13:05:49.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="主从复制">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（七）主备一致与高可用 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（七）主备一致与高可用
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-03-16 21:05:49" itemprop="dateCreated datePublished" datetime="2024-03-16T21:05:49+08:00">2024-03-16</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>6.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>6 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>主库写一份数据，备库怎么跟上；主库挂了谁来接；接完以后，读请求打到从库会不会读到旧值。三件事串起来就是高可用。MySQL 的绝大部分高可用方案都长在一主一备这棵树上，树根是 binlog。这篇从 binlog 的内容和同步链路讲起，看主备延迟从哪来、切换时拿可靠性还是可用性换；再看备库怎么并行追日志、GTID 怎么替代位点；最后落到读写分离的过期读和实例健康检测——这两处最容易在表面正常的系统里埋问题。</p>
+<span id="more"></span>
+
+<h2 id="binlog-与主备同步"><a href="#binlog-与主备同步" class="headerlink" title="binlog 与主备同步"></a>binlog 与主备同步</h2><p>最基本的架构是一主一备：平时读写都在节点 A，B 作为备库把 A 的更新同步过来；切换时客户端改访问 B，A 反过来做备库。备库建议设成 readonly，挡住运营查询的误操作和切换逻辑的双写，也方便用这个状态判断节点角色。同步线程有超级权限，只读拦不住它。</p>
+<p>一条更新从 A 到 B 要走完整条链路：备库用 <code>change master</code> 配好主库的地址和起始位点，<code>start slave</code> 启动 io_thread 和 sql_thread；io_thread 连上主库，主库按备库给的位置读 binlog 发过来；备库把收到的内容写成 relay log；sql_thread 读 relay log，解析出命令并执行。B 执行完同一份 binlog，状态就和 A 一致。</p>
+<pre class="mermaid">
+flowchart LR
+    C[客户端写入 A] --&gt; A[主库 A 执行事务写 binlog]
+    A --&gt; IO[A 的 binlog 发送线程]
+    IO --&gt; IT[备库 io_thread]
+    IT --&gt; R[relay log]
+    R --&gt; ST[sql_thread 解析并执行]
+    ST --&gt; B[备库 B 数据更新]
+</pre>
+
+<p>binlog 的格式决定备库拿到的是什么。statement 格式记录 SQL 原文，一条带 <code>limit</code> 的 delete 在主库走索引 a、在备库走索引 t_modified，删掉的是不同行，MySQL 会对这种语句报 unsafe 警告。row 格式不记原文，改记 Table_map 和 Delete_rows 两类 event，把被删行的主键和字段值写进去，备库拿到后直接删那一行。一条语句删十万行，statement 只记几十字节，row 要把十万行都写进日志，空间和 IO 都上去了。mixed 让优化器判断：可能引起不一致的用 row，否则用 statement。</p>
+<p>row 格式还有个附带好处是数据恢复。delete 的 binlog 里存着整行旧值，改成 insert 就能插回去；insert 记着所有字段，反过来就是 delete；update 记着改前改后两行，对调一下再执行就能撤销。依赖上下文的语句则不能只拷 SQL 出来执行——比如 mixed 下带 <code>now()</code> 的 insert，binlog 里会在前面补一条 <code>SET TIMESTAMP</code>，把函数返回值钉住。恢复数据时要用工具把整段解析结果发给 MySQL，摘出 statement 单独跑会丢掉这些上下文。</p>
+<p>双 M 结构互为主备，切换时不用改主备关系，代价是日志在两个节点间来回传。解决办法靠 server_id：两个实例的 server_id 必须不同；备库重放日志生成的 binlog 沿用原日志的 server_id；每个节点收到日志先看这个 id，跟自己相同就丢弃。三节点迁移时可能绕过这个机制，可用 <code>IGNORE_SERVER_IDS</code> 临时过滤某个 id，稳定后再去掉。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">show</span> binlog events <span class="keyword">in</span> <span class="string">&#x27;master.000001&#x27;</span>;</span><br><span class="line">mysqlbinlog <span class="operator">-</span>vv data<span class="operator">/</span>master<span class="number">.000001</span> <span class="comment">--start-position=8900;</span></span><br><span class="line">mysqlbinlog master<span class="number">.000001</span> <span class="comment">--start-position=2738 --stop-position=2973 | mysql -h127.0.0.1 -P13000 -u$user -p$pwd;</span></span><br><span class="line">stop slave;</span><br><span class="line">change master <span class="keyword">to</span> IGNORE_SERVER_IDS<span class="operator">=</span>(server_id_of_B);</span><br><span class="line"><span class="keyword">start</span> slave;</span><br></pre></td></tr></table></figure>
+
+<h2 id="主备延迟与切换取舍"><a href="#主备延迟与切换取舍" class="headerlink" title="主备延迟与切换取舍"></a>主备延迟与切换取舍</h2><p>一个事务在主库写完 binlog 记 T1，备库收到记 T2，执行完成记 T3，延迟就是 T3-T1。<code>show slave status</code> 返回的 seconds_behind_master 取当前事务 binlog 里的时间戳和系统时间的差。备库连主库时会取一次主库的 Unix 时间校准，两边系统时间不一致也让这个值失准不了——但校准只在建连时发生，连上之后改系统时间就管不着了。网络正常时 T2-T1 很短，延迟主要出在备库消费 relay log 跟不上主库生产 binlog。</p>
+<p>慢在消费端通常有三类原因。备库机器规格低或多台备库挤在一台机器上，更新的 IOPS 压力跟主库没区别，争抢就慢；备库被拿去跑运营分析和统计查询，CPU 被吃满；主库上有大事务，binlog 要等事务提交才写，一个十分钟的事务能让备库落后十分钟——一次性删大量历史数据、大表 DDL 都属于这类。前两类靠对称部署、一主多从、统计查询输出到外部系统疏解，第三类要把大事务拆小、DDL 走在线变更工具。</p>
+<p>延迟存在，切换就有两种策略。可靠性优先的流程是：先看备库的 seconds_behind_master 小于阈值；把主库设为只读；等备库的延迟归零；把备库改成可读写；切流量。第 2 步之后到第 4 步之前两边都只读，系统有不可写窗口，等延迟归零那一步最耗时——第 1 步的预判省不掉。可用性优先把第 4、5 步提到最前面，几乎消除了不可用时间，代价是可能数据不一致：主备延迟 5 秒时切到备库，新写入的 c&#x3D;5 先在备库插成 (4,5)，随后 relay log 里的 c&#x3D;4 插成 (5,4)，主库那边又收到 c&#x3D;5 插成 (5,5)，两边各多出一行。row 格式下这类冲突会报 duplicate key 并停下，问题容易暴露；statement 或 mixed 下可能悄悄错下去。</p>
+<p>主库掉电属于被动切换，此时没有”等延迟变小”的机会。按可靠性优先就得等备库把 relay log 应用完，这期间整个服务不可用；直接切过去又会让客户端查不到已提交的事务，看起来像丢数据。保证可靠性的前提下，可用性取决于延迟——延迟越小，故障恢复越快。日志库这类可以事后用 binlog 补齐、短暂不一致不影响业务的场景，才值得选可用性优先，前提是写入逻辑能降级，别让日志写不进去挡住主流程。</p>
+<pre class="mermaid">
+flowchart TD
+    A[发起主备切换] --&gt; B{选择策略}
+    B --&gt;|可靠性优先| C[主库设只读]
+    C --&gt; D[等备库延迟归零]
+    D --&gt; E[备库可读写 切流量]
+    E --&gt; F[有不可用窗口 数据可靠]
+    B --&gt;|可用性优先| G[直接切流量并开放备库写入]
+    G --&gt; H[几乎无中断 可能数据不一致]
+</pre>
+
+<h2 id="并行复制的演进"><a href="#并行复制的演进" class="headerlink" title="并行复制的演进"></a>并行复制的演进</h2><p>主库有行锁，除了热点行都能并发写；备库只靠一个 sql_thread 顺序执行 relay log，追不上是迟早的事。多线程复制把 sql_thread 改成 coordinator，只负责读日志和分发事务，真正更新数据的是一组 worker，数量由 <code>slave_parallel_workers</code> 控制。分发有两条硬约束：更新同一行的两个事务必须进同一个 worker，否则顺序颠倒会导致主备不一致；同一个事务的多条语句不能拆开，否则别的查询会看到”更新了一半”的事务。</p>
+<p>按表分发用每个 worker 一张 hash 表，key 是库名加表名，value 是队列里修改这张表的事务数。新事务跟所有 worker 的队列比对：都不冲突就给最闲的 worker；跟多个冲突就等；只跟一个冲突就投给它。多表负载均匀时效果好，所有更新都砸在同一张热点表上就退化成单线程。按行分发把 key 换成库名、表名和唯一键值，冲突判断细到行，并行度更高，前提是 binlog 用 row 格式、表有主键且没有外键。唯一键也得算进去：两个事务改的主键不同，新值可能撞上对方的唯一索引，分到不同 worker 就会报错。大事务删一百万行要记一百万个 hash 项，超过阈值就暂时退回单线程。</p>
+<p>按库分发最省事，hash 的 key 只是库名，也不挑 binlog 格式，但所有表都在一个库里时没有并行效果。基于组提交的思路换了角度：同一组提交的事务不会改同一行，主库能并行的备库也能并行。给同组事务打上相同的 commit_id 写进 binlog，备库把相同 commit_id 的事务分给多个 worker，这组做完再取下一组。问题是组里混进一个大事务，其他 worker 就闲着。</p>
+<p>官方后来用 prepare 阶段替代 commit 阶段作并行边界——走到 prepare 就说明通过了锁冲突检验，prepare 与 commit 状态之间的事务也能一起并行。拉长 binlog 从 write 到 fsync 的间隔，能攒出更多同时处于 prepare 的事务，主库稍慢一点，备库并行度反而上去。再往后的策略基于 WRITESET：给改动的每一行按库名、表名、索引名和值算 hash 组成集合，两个集合没有交集就能并行。hash 集合在主库生成后直接写进 binlog，备库不用解析行数据。</p>
+<pre class="mermaid">
+flowchart LR
+    R[coordinator 读 relay log] --&gt; D{分发依据}
+    D --&gt;|按表| T[同表事务同一 worker]
+    D --&gt;|按行| K[同键值事务同一 worker 需 row 格式]
+    D --&gt;|按库| S[同库事务同一 worker]
+    D --&gt;|组提交| G[同 commit_id 或 prepare 组并行]
+    D --&gt;|WRITESET| W[无交集 writeset 可并行]
+    T --&gt; P[worker 线程组]
+    K --&gt; P
+    S --&gt; P
+    G --&gt; P
+    W --&gt; P
+</pre>
+
+<h2 id="GTID-与过期读"><a href="#GTID-与过期读" class="headerlink" title="GTID 与过期读"></a>GTID 与过期读</h2><p>一主多从切换时，从库得把自己指向新主库。基于位点的做法要在新主库上找一个”稍微往前”的位点，再用 mysqlbinlog 按故障时刻定位，这个值很难精确——已经同步过的事务会被重放，同步线程报 Duplicate entry 停住。处理办法是碰到错误就 <code>set global sql_slave_skip_counter=1</code> 跳过，或者设置 <code>slave_skip_errors=&#39;1032,1062&#39;</code> 忽略两类已知无损的错误，稳定后置空，免得真出不一致也被跳过。</p>
+<p>GTID 把这件事接了过去。每个提交的事务有一个 <code>server_uuid:gno</code>，gno 从 1 递增，实例维护一个已执行 GTID 的集合。切换时用 <code>master_auto_position=1</code>，从库把自己的集合发给新主库，新主库算出差集，确认有从库需要的全部 binlog，就从第一个不在从库集合里的事务开始发；日志已被清掉就直接报错，不像位点协议那样让备库随便指定位置。如果从库多出一个主库没有的 GTID，把它设进 <code>gtid_next</code>、提交一个空事务、再恢复 automatic，就精确表达了跳过。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">change master <span class="keyword">to</span> master_host<span class="operator">=</span>$host, master_port<span class="operator">=</span>$port, master_auto_position<span class="operator">=</span><span class="number">1</span>;</span><br><span class="line"><span class="keyword">set</span> gtid_next<span class="operator">=</span><span class="string">&#x27;aaaaaaaa-cccc-dddd-eeee-ffffffffffff:10&#x27;</span>;</span><br><span class="line"><span class="keyword">begin</span>;</span><br><span class="line"><span class="keyword">commit</span>;</span><br><span class="line"><span class="keyword">set</span> gtid_next<span class="operator">=</span>automatic;</span><br><span class="line"><span class="keyword">start</span> slave;</span><br></pre></td></tr></table></figure>
+
+<p>读写分离绕不开过期读：刚提交完更新，紧接着的查询路由到从库，从库还没应用完日志，读到的是旧状态。用得最多的办法是按请求分类——发布商品后立刻回看走主库，逛商铺页面晚几秒无所谓。如果所有查询都不能读旧值，读写分离就失去意义。sleep 一下或前端先回显来”等一等”并不精确：本来 0.5 秒能读到正确结果也要等 1 秒，延迟真超过 1 秒还是过期。</p>
+<p>更准一点的思路是等条件满足再查。判断 <code>seconds_behind_master=0</code>，或比对 Master_Log_File 与 Relay_Master_Log_File、Read_Master_Log_Pos 与 Exec_Master_Log_Pos 两组位点，或比对 Retrieved_Gtid_Set 与 Executed_Gtid_Set——后两种比秒级判断精确。它们判断的都是”收到的日志都执行完了”，但还有一种状态：事务在主库已提交并回复客户端，日志还没发到从库。这时从库认为无延迟，依然查不到那个事务。semi-sync 要求主库收到从库的 ack 才回复客户端，配合位点判断能堵上这个口子；一主多从下它只保证收到 ack 的那一个从库是最新的，其他从库照旧可能过期。</p>
+<p>再进一步是只等自己关心的那个事务。更新提交后取主库当前的 File 和 Position，在选中的从库上执行 <code>select master_pos_wait(File, Position, 1)</code>，返回非负整数说明这个位置之前的日志都应用完了，可以查从库；超时退回主库。GTID 模式下用 <code>wait_for_executed_gtid_set(gtid, 1)</code>，事务的 GTID 能从返回包直接拿，省掉一次 show master status。两种方案都要处理所有从库都延迟的情况：查询全涌到主库，限流得提前想好。大表 DDL 是反例——主库上十分钟的大事务，备库要过十分钟才执行到后续事务的 GTID，等待查询全线超时，这种预期内的操作该先把读流量切回主库再变更。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">show</span> slave status;</span><br><span class="line"><span class="keyword">select</span> master_pos_wait(<span class="string">&#x27;master.000001&#x27;</span>, <span class="number">2738</span>, <span class="number">1</span>);</span><br><span class="line"><span class="keyword">select</span> wait_for_executed_gtid_set(<span class="string">&#x27;uuid:10&#x27;</span>, <span class="number">1</span>);</span><br></pre></td></tr></table></figure>
+
+<h2 id="健康检测"><a href="#健康检测" class="headerlink" title="健康检测"></a>健康检测</h2><p><code>select 1</code> 只能说明进程还在。把 <code>innodb_thread_concurrency</code> 设成一个小值，几个 <code>select sleep(100) from t</code> 占满并发额度之后，select 1 照样秒回，查业务表却全部堵住。并发连接和并发查询是两回事：processlist 里几千个连接只是多占内存，真正吃 CPU 的是正在执行的语句，这个上限卡的是后者。等行锁的线程不计入并发额度，这点很关键——否则一个持锁事务加上 128 个等锁线程就能把额度占满，持锁事务反而提交不了，整个系统卡死。</p>
+<p>要覆盖并发打满，得访问 InnoDB。在系统库建一张 health_check 表，定期 <code>select * from mysql.health_check</code>。它能查出并发过高，却查不出磁盘写满：binlog 所在磁盘 100% 时更新和提交都堵住，读仍正常。把检测改成更新时间戳就能覆盖。主备都检测时，双 M 结构会把备库的检测更新传回主库，两边用同一行会冲突，所以按 server_id 存多行，用 <code>on duplicate key update</code> 各更新各的。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> mysql.health_check (</span><br><span class="line">  id <span class="type">int</span> <span class="keyword">not</span> <span class="keyword">null</span>,</span><br><span class="line">  t_modified <span class="type">timestamp</span> <span class="keyword">not</span> <span class="keyword">null</span> <span class="keyword">default</span> <span class="built_in">current_timestamp</span>,</span><br><span class="line">  <span class="keyword">primary</span> key (id)</span><br><span class="line">);</span><br><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> mysql.health_check(id, t_modified) <span class="keyword">values</span> (@<span class="variable">@server</span>_id, now())</span><br><span class="line">  <span class="keyword">on</span> duplicate key <span class="keyword">update</span> t_modified<span class="operator">=</span>now();</span><br></pre></td></tr></table></figure>
+
+<p>外部检测有个绕不过去的短板：轮询有间隔，系统出问题后要等下一次探测才可能发现；探测语句本身消耗很小，日志盘 IO 已经 100%、业务 SQL 慢得不能接受时，它仍可能抢到一点 IO 资源在超时前返回，检测系统据此判断”正常”。把判断搬进数据库内部更可靠。performance_schema 的 file_summary_by_event_name 记录了每次 IO 请求的时间，按 event_name 分别统计 redo log 和 binlog 的 COUNT_STAR、SUM、MIN、AVG、MAX。打开需要的统计项，设一个单次 IO 超过 200 毫秒的阈值去查 MAX_TIMER_WAIT，发现异常后 truncate 这张表，让下一轮统计从头累积。全开统计会有大约一成的性能损耗，只开需要的项就便宜得多。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>binlog 的格式决定备库重放得失真，row 记行、statement 记语句，同步链路靠 io_thread 落 relay log、sql_thread 执行。延迟出在备库消费慢和大事务，切换在可靠性与可用性之间取舍，多数场景该选可靠性优先。并行复制按表、按行、按组、按 writeset 逐级细化冲突判断；GTID 让一主多从切换不再手工找位点。读写分离的过期读按请求分类，必要时等位点或等 GTID，超时退回主库并限流；健康检测从 select 1 走到查表、更新系统表，再补上内部 IO 统计，逐层逼近真实状态。</p>
+<p><strong>参考</strong>：《MySQL 实战 45 讲》</p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/03/16/MySQL%EF%BC%88%E4%B8%83%EF%BC%89%E4%B8%BB%E5%A4%87%E4%B8%80%E8%87%B4%E4%B8%8E%E9%AB%98%E5%8F%AF%E7%94%A8/" title="MySQL（七）主备一致与高可用">https://xssdpgy.github.io/2024/03/16/MySQL（七）主备一致与高可用/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E4%B8%BB%E4%BB%8E%E5%A4%8D%E5%88%B6/" rel="tag"># 主从复制</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/" rel="prev" title="MySQL（六）排序、join 与临时表">
+      <i class="fa fa-chevron-left"></i> MySQL（六）排序、join 与临时表
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/03/29/MySQL%EF%BC%88%E5%85%AB%EF%BC%89%E6%95%B0%E6%8D%AE%E5%AE%89%E5%85%A8%E4%B8%8E%E8%AF%AF%E5%88%A0%E6%81%A2%E5%A4%8D/" rel="next" title="MySQL（八）数据安全与误删恢复">
+      MySQL（八）数据安全与误删恢复 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#binlog-%E4%B8%8E%E4%B8%BB%E5%A4%87%E5%90%8C%E6%AD%A5"><span class="nav-text">binlog 与主备同步</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%BB%E5%A4%87%E5%BB%B6%E8%BF%9F%E4%B8%8E%E5%88%87%E6%8D%A2%E5%8F%96%E8%88%8D"><span class="nav-text">主备延迟与切换取舍</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B9%B6%E8%A1%8C%E5%A4%8D%E5%88%B6%E7%9A%84%E6%BC%94%E8%BF%9B"><span class="nav-text">并行复制的演进</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#GTID-%E4%B8%8E%E8%BF%87%E6%9C%9F%E8%AF%BB"><span class="nav-text">GTID 与过期读</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%81%A5%E5%BA%B7%E6%A3%80%E6%B5%8B"><span class="nav-text">健康检测</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : 'a659747d22ae4a06a5b36d4fb02ef049',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>

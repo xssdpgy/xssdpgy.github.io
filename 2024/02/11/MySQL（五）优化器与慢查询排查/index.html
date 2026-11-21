@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言语句该走哪个索引，由优化器说了算。多数时候它判断得准，偶尔一次估算偏差，就能让毫秒级的查询变成全表扫描。这类问题查起来费劲：SQL 语义没写错，索引也建了，执行计划偏偏和预期相反。这篇先看代价怎么估、扫描行数怎么算出来，偏差出现后有哪些矫正手段。再往后是另一类更常见的慢——字段上加了函数、类型对不上、两表字符集不同，索引在树搜索这一步就废了。最后落到排查顺序和高峰期的应急边界，哪些手段能止血，">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MySQL（五）优化器与慢查询排查">
+<meta property="og:url" content="https://xssdpgy.github.io/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言语句该走哪个索引，由优化器说了算。多数时候它判断得准，偶尔一次估算偏差，就能让毫秒级的查询变成全表扫描。这类问题查起来费劲：SQL 语义没写错，索引也建了，执行计划偏偏和预期相反。这篇先看代价怎么估、扫描行数怎么算出来，偏差出现后有哪些矫正手段。再往后是另一类更常见的慢——字段上加了函数、类型对不上、两表字符集不同，索引在树搜索这一步就废了。最后落到排查顺序和高峰期的应急边界，哪些手段能止血，">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2024-02-11T08:23:57.000Z">
+<meta property="article:modified_time" content="2024-02-11T08:23:57.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="MySQL">
+<meta property="article:tag" content="查询优化">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MySQL（五）优化器与慢查询排查 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MySQL（五）优化器与慢查询排查
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-02-11 16:23:57" itemprop="dateCreated datePublished" datetime="2024-02-11T16:23:57+08:00">2024-02-11</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%95%B0%E6%8D%AE%E5%BA%93/" itemprop="url" rel="index"><span itemprop="name">数据库</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>5.8k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>5 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>语句该走哪个索引，由优化器说了算。多数时候它判断得准，偶尔一次估算偏差，就能让毫秒级的查询变成全表扫描。这类问题查起来费劲：SQL 语义没写错，索引也建了，执行计划偏偏和预期相反。这篇先看代价怎么估、扫描行数怎么算出来，偏差出现后有哪些矫正手段。再往后是另一类更常见的慢——字段上加了函数、类型对不上、两表字符集不同，索引在树搜索这一步就废了。最后落到排查顺序和高峰期的应急边界，哪些手段能止血，哪些会埋雷。</p>
+<span id="more"></span>
+
+<h2 id="优化器的代价估算"><a href="#优化器的代价估算" class="headerlink" title="优化器的代价估算"></a>优化器的代价估算</h2><p>一条语句可能有多个候选索引，用哪个由优化器决定。它挑的是代价最小的执行方案，扫描行数是主要输入：扫的行数越少，访问磁盘的次数和 CPU 消耗都越低。除行数之外，要不要临时表、要不要排序，也计入代价。</p>
+<p>建一张测试表：id 是主键，a、b 各建一个普通索引，插入十万行 <code>(i,i,i)</code>。查询 <code>select * from t where a between 10000 and 20000</code>，范围条件落在 a 上，explain 显示用了索引 a，扫描 10001 行，符合预期。</p>
+<p>接着做一组动作：会话 A 开启事务不提交，会话 B 把表里数据删空，再调用存储过程重新插入十万行。同样的查询再跑，explain 里已经看不到索引 a 了。把慢日志阈值设成 0 之后对比：原句扫了十万行、40 毫秒；加上 <code>force index(a)</code> 只扫 10001 行、21 毫秒。优化器选错，耗时翻了一倍。这对应的是不断删历史数据又新增数据的场景。</p>
+<pre class="mermaid">
+flowchart LR
+    S[SQL 语句解析] --&gt; C[列出候选索引]
+    C --&gt; E[估算每个索引的扫描行数]
+    E --&gt; X[计入回表 排序 临时表代价]
+    X --&gt; P[选代价最低的方案]
+    P --&gt; Q[执行]
+</pre>
+
+<p>优化器在开始执行之前并不知道满足条件的有多少行，只能估算。扫描行数估错，后面整套代价比较就跟着错，这正是上面例子的症结。</p>
+<h2 id="索引统计与扫描行数"><a href="#索引统计与扫描行数" class="headerlink" title="索引统计与扫描行数"></a>索引统计与扫描行数</h2><p>估算的依据是索引的基数（cardinality），也就是这个索引上不同值的个数。基数越大，区分度越好，用它筛掉的行越多。基数来自采样：InnoDB 抽若干个数据页，数出这些页上不同值的个数求平均，再乘索引总页数。把整张表逐行统计能得精确值，代价太高，采样是折中。持久化统计时默认抽 20 个页、数据变更超过十分之一就重算；只放内存的模式下抽 8 个页、变更超过十六分之一重算。两种模式都会偏，采样本身就带偏差。</p>
+<p>在这个表里，三列的取值逐行相同，<code>show index</code> 查出来的三个基数却各不相同，而且都不准。更直接看 explain 的 rows 字段：原句估成 104620，强制走 a 的版本估成 37116，而它实际只扫 10001 行。估出来差了几倍，优化器据此算代价，结论自然歪。</p>
+<p>还有一层代价要算进去：走普通索引 a，每取一个值都要回主键树查整行，这个回表成本会被计入。直接扫主键树虽然行数多，却省掉回表。优化器权衡之后认为全扫更快——算法本身没问题，错在行数估得离谱。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">show</span> index <span class="keyword">from</span> t;</span><br><span class="line">explain <span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t <span class="keyword">where</span> a <span class="keyword">between</span> <span class="number">10000</span> <span class="keyword">and</span> <span class="number">20000</span>;</span><br><span class="line">explain <span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t force index(a) <span class="keyword">where</span> a <span class="keyword">between</span> <span class="number">10000</span> <span class="keyword">and</span> <span class="number">20000</span>;</span><br><span class="line">analyze <span class="keyword">table</span> t;</span><br><span class="line">explain <span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t <span class="keyword">where</span> a <span class="keyword">between</span> <span class="number">10000</span> <span class="keyword">and</span> <span class="number">20000</span>;</span><br></pre></td></tr></table></figure>
+
+<p>统计信息偏了就重算，<code>analyze table t</code> 之后 explain 恢复成选索引 a。实践里发现 rows 的估计值和实际扫描量差得远，先做这一步。</p>
+<h2 id="选错索引的矫正"><a href="#选错索引的矫正" class="headerlink" title="选错索引的矫正"></a>选错索引的矫正</h2><p>优化器多数时候选得对，碰上误判有几条路可走，代价各不相同。</p>
+<p>最直接的是 force index。优化器先解析出候选索引列表，再逐个估代价；force index 指定的索引只要在这个列表里，就直接采用，不再比较其他方案。看另一个例子：<code>where (a between 1 and 1000) and (b between 50000 and 100000) order by b limit 1</code>，两个范围没有交集，结果为空。走 a 只扫 1000 行，走 b 要扫 50001 行，可优化器偏偏选了 b。原因在于 b 本身有序，用它能免掉排序，尽管扫得多，代价看起来反而低。实测原句 2.23 秒，强制走 a 之后 0.05 秒。</p>
+<pre class="mermaid">
+flowchart TD
+    A[语句选错索引] --&gt; B[force index 强行指定]
+    A --&gt; C[改写语句引导]
+    A --&gt; D[新增或删除索引]
+    B --&gt; B1[见效快 但写死索引名]
+    C --&gt; C1[不改语义时可用 依赖数据特征]
+    D --&gt; D1[改动大 需评估索引必要性]
+</pre>
+
+<p>force index 的麻烦在于运维节奏。开发阶段谁也不会预先写它，多半是线上出问题了才改 SQL，再走测试和发布，赶不上止血。索引改了名，语句也得跟着改；迁到别的数据库，语法还可能不兼容。</p>
+<p>第二条路是改写语句。把 <code>order by b limit 1</code> 写成 <code>order by b,a limit 1</code>，limit 1 时返回的仍是 b 最小的那行，逻辑一致。这一改，两个索引都免不了排序，扫描行数重新成为决定性因素，优化器就转去选只扫 1000 行的 a。还可以套一层 <code>select * from (... order by b limit 100) alias limit 1</code>，让优化器看到一个更大的候选集，意识到走 b 的代价高。这两种写法都借了这条语句的数据特征，换条 SQL 未必成立。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t</span><br><span class="line"><span class="keyword">where</span> (a <span class="keyword">between</span> <span class="number">1</span> <span class="keyword">and</span> <span class="number">1000</span>) <span class="keyword">and</span> (b <span class="keyword">between</span> <span class="number">50000</span> <span class="keyword">and</span> <span class="number">100000</span>)</span><br><span class="line"><span class="keyword">order</span> <span class="keyword">by</span> b limit <span class="number">1</span>;</span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t force index(a)</span><br><span class="line"><span class="keyword">where</span> (a <span class="keyword">between</span> <span class="number">1</span> <span class="keyword">and</span> <span class="number">1000</span>) <span class="keyword">and</span> (b <span class="keyword">between</span> <span class="number">50000</span> <span class="keyword">and</span> <span class="number">100000</span>)</span><br><span class="line"><span class="keyword">order</span> <span class="keyword">by</span> b limit <span class="number">1</span>;</span><br><span class="line"><span class="keyword">select</span> <span class="operator">*</span> <span class="keyword">from</span> t</span><br><span class="line"><span class="keyword">where</span> (a <span class="keyword">between</span> <span class="number">1</span> <span class="keyword">and</span> <span class="number">1000</span>) <span class="keyword">and</span> (b <span class="keyword">between</span> <span class="number">50000</span> <span class="keyword">and</span> <span class="number">100000</span>)</span><br><span class="line"><span class="keyword">order</span> <span class="keyword">by</span> b,a limit <span class="number">1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>第三条路从索引本身下手：建一个更合适的索引给优化器挑，或者删掉那个被误用的。有些库里”选错”的那个索引本来就没有业务在用，沟通确认后删掉，优化器自然回到正确的选择。</p>
+<h2 id="函数与隐式转换导致的索引失效"><a href="#函数与隐式转换导致的索引失效" class="headerlink" title="函数与隐式转换导致的索引失效"></a>函数与隐式转换导致的索引失效</h2><p>比选错索引更常见的，是语句写法让索引用不上。三类写法看着都合理，落到执行上都会废掉树搜索。</p>
+<p>B+ 树能快速定位，靠的是同一层兄弟节点的有序性。对索引字段做函数运算之后，传进去的值在树的第一层就没法比较了，优化器只能放弃树搜索。它未必会丢掉这个索引——索引 t_modified 比主键树小，遍历它比遍历整张表划算，于是退化成全索引扫描。</p>
+<pre class="mermaid">
+flowchart LR
+    T[字段直接比较] --&gt; R1[按有序性逐层定位]
+    F[字段套函数] --&gt; R2[第一层无法比较]
+    R2 --&gt; R3[放弃树搜索]
+    R3 --&gt; R4[全索引扫描或全表扫描]
+</pre>
+
+<p>交易表 tradelog 存了交易流水号、交易员和交易时间，t_modified 上有索引。统计所有年份 7 月的交易数，很自然会写 <code>where month(t_modified)=7</code>，结果跑得很慢。改成按字段本身的范围查询，把涉及的年份列出来，快速定位就恢复了：<code>where (t_modified &gt;= &#39;2016-7-1&#39; and t_modified &lt; &#39;2016-8-1&#39;) or ...</code>。优化器在这种地方不主动改写：<code>where id+1=10000</code> 加 1 并不破坏有序性，它也不会自动变成 <code>where id=10000-1</code>，得手动改。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">create</span> <span class="keyword">table</span> tradelog (</span><br><span class="line">  id <span class="type">int</span> <span class="keyword">not</span> <span class="keyword">null</span>,</span><br><span class="line">  tradeid <span class="type">varchar</span>(<span class="number">32</span>),</span><br><span class="line">  operator <span class="type">int</span>,</span><br><span class="line">  t_modified datetime,</span><br><span class="line">  <span class="keyword">primary</span> key (id),</span><br><span class="line">  key (tradeid),</span><br><span class="line">  key (t_modified)</span><br><span class="line">);</span><br><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">from</span> tradelog <span class="keyword">where</span> <span class="keyword">month</span>(t_modified)<span class="operator">=</span><span class="number">7</span>;</span><br><span class="line"><span class="keyword">select</span> <span class="built_in">count</span>(<span class="operator">*</span>) <span class="keyword">from</span> tradelog <span class="keyword">where</span></span><br><span class="line">  (t_modified <span class="operator">&gt;=</span> <span class="string">&#x27;2016-7-1&#x27;</span> <span class="keyword">and</span> t_modified <span class="operator">&lt;</span> <span class="string">&#x27;2016-8-1&#x27;</span>) <span class="keyword">or</span></span><br><span class="line">  (t_modified <span class="operator">&gt;=</span> <span class="string">&#x27;2017-7-1&#x27;</span> <span class="keyword">and</span> t_modified <span class="operator">&lt;</span> <span class="string">&#x27;2017-8-1&#x27;</span>) <span class="keyword">or</span></span><br><span class="line">  (t_modified <span class="operator">&gt;=</span> <span class="string">&#x27;2018-7-1&#x27;</span> <span class="keyword">and</span> t_modified <span class="operator">&lt;</span> <span class="string">&#x27;2018-8-1&#x27;</span>);</span><br></pre></td></tr></table></figure>
+
+<p>隐式类型转换是第二类。tradeid 定义成 varchar，拿整型 110717 去比，MySQL 会把字符串转成数字——<code>select &quot;10&quot; &gt; 9</code> 返回 1 就能验证这个方向。转换落在索引字段上，效果等同于套了一层 CAST，树搜索失效，整表扫描。反方向则没事：id 是 int，拿字符串 ‘83126’ 去比，字符串转成数字，索引照用。</p>
+<pre class="mermaid">
+flowchart LR
+    A[varchar 字段 比 整型参数] --&gt; B[字符串转数字]
+    B --&gt; C[函数落在索引字段上]
+    C --&gt; D[索引失效]
+    E[int 字段 比 字符串参数] --&gt; F[字符串转数字]
+    F --&gt; G[函数落在参数上]
+    G --&gt; H[索引可用]
+</pre>
+
+<p>第三类是隐式字符编码转换，出现在两表 join 上。交易明细表 trade_detail 的 tradeid 用 utf8，tradelog 的同名字段用 utf8mb4。utf8mb4 是 utf8 的超集，比较时 MySQL 把 utf8 那侧转成 utf8mb4，避免截断丢数据。关键看转换落在哪一侧：</p>
+<p>以 tradelog 驱动 trade_detail 时，被驱动表的 tradeid 字段被 CONVERT，索引失效，退化为全表扫描。把驱动关系反过来，以 trade_detail 驱动 tradelog，CONVERT 加在传进去的参数上，被驱动表的索引有效。</p>
+<pre class="mermaid">
+flowchart TD
+    J[两表按 tradeid 关联 编码不同] --&gt; D1[tradelog 驱动 trade_detail]
+    J --&gt; D2[trade_detail 驱动 tradelog]
+    D1 --&gt; X1[转换落在被驱动表字段]
+    X1 --&gt; Y1[索引失效 全表扫描]
+    D2 --&gt; X2[转换落在输入参数]
+    X2 --&gt; Y2[被驱动表索引可用]
+</pre>
+
+<p>修法有两种。能改表结构就把 trade_detail 的 tradeid 改成 utf8mb4，从根上消掉转换。不能做大 DDL 时改写语句，主动把驱动表的字段转成 utf8，让被驱动表那侧保持不变：</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">alter</span> <span class="keyword">table</span> trade_detail modify tradeid <span class="type">varchar</span>(<span class="number">32</span>) <span class="type">character</span> <span class="keyword">set</span> utf8mb4 <span class="keyword">default</span> <span class="keyword">null</span>;</span><br><span class="line"><span class="keyword">select</span> d.<span class="operator">*</span> <span class="keyword">from</span> tradelog l, trade_detail d</span><br><span class="line"><span class="keyword">where</span> d.tradeid <span class="operator">=</span> <span class="keyword">convert</span>(l.tradeid <span class="keyword">using</span> utf8) <span class="keyword">and</span> l.id <span class="operator">=</span> <span class="number">2</span>;</span><br></pre></td></tr></table></figure>
+
+<h2 id="慢查询排查与应急边界"><a href="#慢查询排查与应急边界" class="headerlink" title="慢查询排查与应急边界"></a>慢查询排查与应急边界</h2><p>慢查询的成因大体三类：索引没设计好、SQL 没写好、优化器选错。前两类完全可以提前拦住——上线前打开慢日志，把 long_query_time 设成 0，测试表灌入接近线量的数据跑一遍回归，盯住每类语句的 Rows_examined 是否和预期一致。这段时间花得值，能省掉后面的故障复盘。</p>
+<p>有些语句只查一行却很慢，卡点在等待上：等元数据锁，DDL 在前面排队，后续的读写全被挡住；等 flush，一条长查询没结束，flush tables 堵住，再后面的查询跟着堵；等行锁，另一个事务占着这一行的锁不放。<code>show processlist</code> 的 State 字段能把这几种状态区分开，处理思路在锁机制那篇里说过。</p>
+<p>高峰期的临时手段都有代价，按风险从低到高看：</p>
+<p>短连接突增时先别急着调高连接上限。连接数要算上权限验证的成本，放更多人进来只会让 CPU 耗在验证上，SQL 反而拿不到资源。更稳的做法是清掉空闲连接，优先处理事务外的 sleep 线程，从 <code>information_schema.innodb_trx</code> 里能查出哪些线程还在事务中——踢掉事务内的会导致回滚。客户端不会立刻感知连接被断，要确认应用有重连逻辑，并提前通知业务方。</p>
+<figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">show</span> processlist;</span><br><span class="line"><span class="keyword">select</span> trx_mysql_thread_id <span class="keyword">from</span> information_schema.innodb_trx;</span><br><span class="line">kill connection <span class="number">42</span>;</span><br></pre></td></tr></table></figure>
+
+<p>索引漏建导致语句打满库，支持在线加索引的版本可以直接 alter table；更稳妥的节奏是在备库先加、做主备切换、再在原主库补上。查询重写功能可以把写坏的语句改成正确形态，也能给语句加 force index，前提是改写规则经过验证。把压力最大的语句重写成 <code>select 1</code> 直接返回属于止血，其他功能如果共用这条语句模板就会被误伤，优先级放到最后。QPS 突增时从源头断流更干净——撤掉白名单或停用专用账号，前提是白名单和账号本来就是按功能分开管理的。</p>
+<pre class="mermaid">
+flowchart LR
+    A[高峰期性能应急] --&gt; B[优先 清理空闲连接 在线加索引]
+    A --&gt; C[谨慎 查询重写 需验证规则]
+    A --&gt; D[兜底 重写成 select 1]
+    B --&gt; E[代价可控]
+    C --&gt; F[可能误伤共用语句]
+    D --&gt; G[业务逻辑可能整体失败]
+</pre>
+
+<p>还有一类手段绕开规则换性能：跳过权限验证重启数据库。外网可达的实例绝对不能这么做，这种方案留下的口子比它救回的时间难收拾得多。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>代价估算依赖扫描行数，行数来自采样统计，采样会偏——这是选错索引的源头。统计偏了用 <code>analyze table</code> 重算；优化器坚持误判时，force index 见效快但要改 SQL，改写语句和增删索引更温和却依赖具体场景。字段上的函数、隐式类型转换、隐式编码转换会让树搜索失效，写法上把它们挪到参数一侧，或者用范围条件替代函数。慢查询排查先把上限收紧在上线前的回归测试里，应急手段按代价排序，止血动作做完还得回头补根因。</p>
+<p><strong>参考</strong>：《MySQL 实战 45 讲》</p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2024/02/11/MySQL%EF%BC%88%E4%BA%94%EF%BC%89%E4%BC%98%E5%8C%96%E5%99%A8%E4%B8%8E%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5/" title="MySQL（五）优化器与慢查询排查">https://xssdpgy.github.io/2024/02/11/MySQL（五）优化器与慢查询排查/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/MySQL/" rel="tag"># MySQL</a>
+              <a href="/tags/%E6%9F%A5%E8%AF%A2%E4%BC%98%E5%8C%96/" rel="tag"># 查询优化</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2024/01/21/MySQL%EF%BC%88%E5%9B%9B%EF%BC%89%E9%94%81%E6%9C%BA%E5%88%B6%E2%80%94%E2%80%94%E8%A1%A8%E9%94%81%E3%80%81%E8%A1%8C%E9%94%81%E4%B8%8E%E9%97%B4%E9%9A%99%E9%94%81/" rel="prev" title="MySQL（四）锁机制——表锁、行锁与间隙锁">
+      <i class="fa fa-chevron-left"></i> MySQL（四）锁机制——表锁、行锁与间隙锁
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2024/02/16/MySQL%EF%BC%88%E5%85%AD%EF%BC%89%E6%8E%92%E5%BA%8F%E3%80%81join%20%E4%B8%8E%E4%B8%B4%E6%97%B6%E8%A1%A8/" rel="next" title="MySQL（六）排序、join 与临时表">
+      MySQL（六）排序、join 与临时表 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BC%98%E5%8C%96%E5%99%A8%E7%9A%84%E4%BB%A3%E4%BB%B7%E4%BC%B0%E7%AE%97"><span class="nav-text">优化器的代价估算</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%B4%A2%E5%BC%95%E7%BB%9F%E8%AE%A1%E4%B8%8E%E6%89%AB%E6%8F%8F%E8%A1%8C%E6%95%B0"><span class="nav-text">索引统计与扫描行数</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%80%89%E9%94%99%E7%B4%A2%E5%BC%95%E7%9A%84%E7%9F%AB%E6%AD%A3"><span class="nav-text">选错索引的矫正</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%87%BD%E6%95%B0%E4%B8%8E%E9%9A%90%E5%BC%8F%E8%BD%AC%E6%8D%A2%E5%AF%BC%E8%87%B4%E7%9A%84%E7%B4%A2%E5%BC%95%E5%A4%B1%E6%95%88"><span class="nav-text">函数与隐式转换导致的索引失效</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%8E%92%E6%9F%A5%E4%B8%8E%E5%BA%94%E6%80%A5%E8%BE%B9%E7%95%8C"><span class="nav-text">慢查询排查与应急边界</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '265f69ea8397509ea1ada0d8e9b31875',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
