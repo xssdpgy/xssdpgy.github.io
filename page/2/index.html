@@ -822,7 +822,7 @@
   
   
   <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="image" content="/images/avatar.gif">
@@ -836,7 +836,7 @@
       <header class="post-header">
         <h2 class="post-title" itemprop="name headline">
           
-            <a href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/" class="post-title-link" itemprop="url">Linux 性能（九）I O 瓶颈定位与优化</a>
+            <a href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/" class="post-title-link" itemprop="url">Linux 性能（九）I O 瓶颈定位与优化</a>
         </h2>
 
         <div class="post-meta">
@@ -886,7 +886,7 @@
           <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>前面把 I&#x2F;O 栈和指标口径铺开了，这篇专门走定位与优化。现象还是本篇锚点那组：CPU 三成、P99 从 40 毫秒涨到 800 毫秒，只是这次瓶颈落在磁盘上——应用发出 I&#x2F;O 后挂起等待，iowait 冒高，算力闲着。I&#x2F;O 类问题的难处不在工具少，而在几个案例长得很像：都是响应慢、都是 iowait 高，根因却可能是狂打日志、临时文件、慢查询或持久化配置。这篇把「iostat 定瓶颈、pidstat 找进程、strace 和 lsof 定位文件」这条主线走实，再交代 fio 基准与几种优化手段的代价。</p>
           <!--noindex-->
             <div class="post-button">
-              <a class="btn" href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/#more" rel="contents">
+              <a class="btn" href="/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/#more" rel="contents">
                 阅读全文 &raquo;
               </a>
             </div>
@@ -910,7 +910,7 @@
   
   
   <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
-    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20IO%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="image" content="/images/avatar.gif">
@@ -924,7 +924,7 @@
       <header class="post-header">
         <h2 class="post-title" itemprop="name headline">
           
-            <a href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/" class="post-title-link" itemprop="url">Linux 性能（八）文件系统与磁盘 I O 工作原理</a>
+            <a href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20IO%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/" class="post-title-link" itemprop="url">Linux 性能（八）文件系统与磁盘 I/O 工作原理</a>
         </h2>
 
         <div class="post-meta">
@@ -974,7 +974,7 @@
           <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>磁盘和文件系统这一层，最容易被跳过的是原理，最容易被用错的是指标。磁盘空间明明还有，文件却创建不出来，往往是 inode 用尽；%util 到了 100%，也不一定就该换盘——它只统计有没有 I&#x2F;O，不管请求多大。这篇把从应用到磁盘的整条 I&#x2F;O 栈拆开，看清每一层做什么、缓存放在哪，再辨析阻塞&#x2F;非阻塞与同步&#x2F;异步这两组常被混用的概念，最后落到 <code>df -i</code>、<code>iostat</code>、<code>/proc/diskstats</code> 这些观测点。本篇锚点那组数——CPU 三成、P99 800 毫秒——在 I&#x2F;O 层对应的是请求排队等磁盘，而不是算力不够。</p>
           <!--noindex-->
             <div class="post-button">
-              <a class="btn" href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/#more" rel="contents">
+              <a class="btn" href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20IO%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/#more" rel="contents">
                 阅读全文 &raquo;
               </a>
             </div>

@@ -2776,8 +2776,8 @@ classDiagram
 <li>Linux 性能（五）CPU 瓶颈定位与优化手段的代价</li>
 <li>Linux 性能（六）内存工作原理与 Buffer Cache</li>
 <li>Linux 性能（七）内存泄漏、Swap 与回收机制</li>
-<li>Linux 性能（八）文件系统与磁盘 I O 工作原理</li>
-<li>Linux 性能（九）I O 瓶颈定位与优化</li>
+<li>Linux 性能（八）文件系统与磁盘 I&#x2F;O 工作原理</li>
+<li>Linux 性能（九）I&#x2F;O 瓶颈定位与优化</li>
 <li>Linux 性能（十）网络协议栈与性能评估</li>
 <li>Linux 性能（十一）网络问题定位——DNS、抓包、延迟与 DDoS</li>
 <li>Linux 性能（十二）NAT 性能与网络优化思路</li>
@@ -3360,7 +3360,7 @@ graph TD
   </entry>
   <entry>
     <title>Linux 性能（九）I O 瓶颈定位与优化</title>
-    <url>/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89I%20O%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/</url>
+    <url>/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/</url>
     <content><![CDATA[<h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>前面把 I&#x2F;O 栈和指标口径铺开了，这篇专门走定位与优化。现象还是本篇锚点那组：CPU 三成、P99 从 40 毫秒涨到 800 毫秒，只是这次瓶颈落在磁盘上——应用发出 I&#x2F;O 后挂起等待，iowait 冒高，算力闲着。I&#x2F;O 类问题的难处不在工具少，而在几个案例长得很像：都是响应慢、都是 iowait 高，根因却可能是狂打日志、临时文件、慢查询或持久化配置。这篇把「iostat 定瓶颈、pidstat 找进程、strace 和 lsof 定位文件」这条主线走实，再交代 fio 基准与几种优化手段的代价。</p>
 <span id="more"></span>
 
@@ -3409,7 +3409,7 @@ flowchart TD
 <li><strong>不测基准就设优化目标</strong>。IOPS、吞吐要多少才算够，得先用 fio 在相同配置下测出极限值，否则优化完了也说不清是否达标。</li>
 </ol>
 <p>也有不必深究的时候：iostat 显示 %util 接近零、await 稳定在低位，这时延迟和 I&#x2F;O 无关，回到 CPU 或应用逻辑上查。反过来，若 iostat 忙而 pidstat 里大多是内核线程，方向就转到内存——Swap 换页和缓存回收都会制造大量磁盘 I&#x2F;O，症结在那边。</p>
-<h2 id="I-O-瓶颈定位速查表"><a href="#I-O-瓶颈定位速查表" class="headerlink" title="I O 瓶颈定位速查表"></a>I O 瓶颈定位速查表</h2><table>
+<h2 id="I-x2F-O-瓶颈定位速查表"><a href="#I-x2F-O-瓶颈定位速查表" class="headerlink" title="I&#x2F;O 瓶颈定位速查表"></a>I&#x2F;O 瓶颈定位速查表</h2><table>
 <thead>
 <tr>
 <th>现象</th>
@@ -3769,12 +3769,12 @@ flowchart LR
       </tags>
   </entry>
   <entry>
-    <title>Linux 性能（八）文件系统与磁盘 I O 工作原理</title>
-    <url>/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20I%20O%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/</url>
+    <title>Linux 性能（八）文件系统与磁盘 I/O 工作原理</title>
+    <url>/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20IO%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/</url>
     <content><![CDATA[<h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>磁盘和文件系统这一层，最容易被跳过的是原理，最容易被用错的是指标。磁盘空间明明还有，文件却创建不出来，往往是 inode 用尽；%util 到了 100%，也不一定就该换盘——它只统计有没有 I&#x2F;O，不管请求多大。这篇把从应用到磁盘的整条 I&#x2F;O 栈拆开，看清每一层做什么、缓存放在哪，再辨析阻塞&#x2F;非阻塞与同步&#x2F;异步这两组常被混用的概念，最后落到 <code>df -i</code>、<code>iostat</code>、<code>/proc/diskstats</code> 这些观测点。本篇锚点那组数——CPU 三成、P99 800 毫秒——在 I&#x2F;O 层对应的是请求排队等磁盘，而不是算力不够。</p>
 <span id="more"></span>
 
-<h2 id="文件系统与-I-O-栈"><a href="#文件系统与-I-O-栈" class="headerlink" title="文件系统与 I O 栈"></a>文件系统与 I O 栈</h2><p>Linux 里一切皆文件，普通文件、目录、块设备、套接字、管道都走统一的文件系统接口。文件系统管理文件靠两个结构：索引节点（inode）记录文件大小、权限、修改时间、数据位置这些元数据，和文件一一对应，存在磁盘上；目录项（dentry）记录文件名、inode 指针和目录关系，由内核维护在内存里，也就是目录项缓存。一个文件可以有多个目录项——硬链接就是不同名字指向同一个 inode。</p>
+<h2 id="文件系统与-I-x2F-O-栈"><a href="#文件系统与-I-x2F-O-栈" class="headerlink" title="文件系统与 I&#x2F;O 栈"></a>文件系统与 I&#x2F;O 栈</h2><p>Linux 里一切皆文件，普通文件、目录、块设备、套接字、管道都走统一的文件系统接口。文件系统管理文件靠两个结构：索引节点（inode）记录文件大小、权限、修改时间、数据位置这些元数据，和文件一一对应，存在磁盘上；目录项（dentry）记录文件名、inode 指针和目录关系，由内核维护在内存里，也就是目录项缓存。一个文件可以有多个目录项——硬链接就是不同名字指向同一个 inode。</p>
 <p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-08-%E7%9B%AE%E5%BD%95%E9%A1%B9%E7%B4%A2%E5%BC%95%E8%8A%82%E7%82%B9%E4%B8%8E%E7%A3%81%E7%9B%98%E5%85%B3%E7%B3%BB.png" alt="目录项、索引节点与磁盘逻辑块的关系"></p>
 <p>磁盘读写的最小单位是扇区，512 字节，一次读写这么小块效率太低，文件系统就把连续扇区组成逻辑块，常见 4 KB，作为最小管理单元。磁盘格式化后划成三个区：超级块存整个文件系统的状态，索引节点区存 inode，数据块区存文件数据。</p>
 <p>为了兼容 Ext4、XFS、NFS 这些实现各异的文件系统，内核在应用和具体文件系统之间加了虚拟文件系统 VFS，定义统一的数据结构和接口。应用只需跟 VFS 打交道，不必关心底层是哪种文件系统。</p>
@@ -3820,7 +3820,7 @@ flowchart LR
 
 <p>read 是同步读，拿到磁盘数据前不返回；aio_read 是异步读，系统先返回，结果通过回调通知。套接字 send 默认阻塞，设了 O_NONBLOCK 就不阻塞，配合 epoll 可以在不可写时转去处理别的套接字。两组维度可以组合，非阻塞的调用照样可能用同步方式返回结果，轮询就是这种情况；把它当成异步，会在结果何时到达上判断错。</p>
 <p>观测工具本身也会出错。用 strace 跟踪一个多线程进程的 write，可能一条都看不到，加 <code>-f</code> 跟踪所有线程才有结果。工具的输出不合理时，先检查选项和原理，别急着下结论。</p>
-<h2 id="磁盘-I-O-指标速查表"><a href="#磁盘-I-O-指标速查表" class="headerlink" title="磁盘 I O 指标速查表"></a>磁盘 I O 指标速查表</h2><table>
+<h2 id="磁盘-I-x2F-O-指标速查表"><a href="#磁盘-I-x2F-O-指标速查表" class="headerlink" title="磁盘 I&#x2F;O 指标速查表"></a>磁盘 I&#x2F;O 指标速查表</h2><table>
 <thead>
 <tr>
 <th>现象</th>

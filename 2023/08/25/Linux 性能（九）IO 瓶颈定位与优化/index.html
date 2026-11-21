@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.1.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+  <meta http-equiv="Cache-Control" content="no-transform">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"xssdpgy.github.io","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":true,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":true,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="引言前面把 I&#x2F;O 栈和指标口径铺开了，这篇专门走定位与优化。现象还是本篇锚点那组：CPU 三成、P99 从 40 毫秒涨到 800 毫秒，只是这次瓶颈落在磁盘上——应用发出 I&#x2F;O 后挂起等待，iowait 冒高，算力闲着。I&#x2F;O 类问题的难处不在工具少，而在几个案例长得很像：都是响应慢、都是 iowait 高，根因却可能是狂打日志、临时文件、慢查询或持久化配置。这">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 性能（九）I O 瓶颈定位与优化">
+<meta property="og:url" content="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/index.html">
+<meta property="og:site_name" content="雪山上的蒲公英">
+<meta property="og:description" content="引言前面把 I&#x2F;O 栈和指标口径铺开了，这篇专门走定位与优化。现象还是本篇锚点那组：CPU 三成、P99 从 40 毫秒涨到 800 毫秒，只是这次瓶颈落在磁盘上——应用发出 I&#x2F;O 后挂起等待，iowait 冒高，算力闲着。I&#x2F;O 类问题的难处不在工具少，而在几个案例长得很像：都是响应慢、都是 iowait 高，根因却可能是狂打日志、临时文件、慢查询或持久化配置。这">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E8%84%91%E5%9B%BE.png">
+<meta property="og:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%8C%87%E6%A0%87%E6%89%BE%E5%B7%A5%E5%85%B7%E8%A1%A8.png">
+<meta property="article:published_time" content="2023-08-25T13:18:47.000Z">
+<meta property="article:modified_time" content="2023-08-25T13:18:47.000Z">
+<meta property="article:author" content="Zang JinFeng">
+<meta property="article:tag" content="Linux">
+<meta property="article:tag" content="性能分析">
+<meta property="article:tag" content="磁盘 I&#x2F;O">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E8%84%91%E5%9B%BE.png">
+
+<link rel="canonical" href="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Linux 性能（九）I O 瓶颈定位与优化 | 雪山上的蒲公英</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+<link rel="alternate" href="/atom.xml" title="雪山上的蒲公英" type="application/atom+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">雪山上的蒲公英</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">JinFeng's Blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Zang JinFeng">
+      <meta itemprop="description" content="Stay hungry, Stay foolish.">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="雪山上的蒲公英">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Linux 性能（九）I O 瓶颈定位与优化
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2023-08-25 21:18:47" itemprop="dateCreated datePublished" datetime="2023-08-25T21:18:47+08:00">2023-08-25</time>
+            </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96/" itemprop="url" rel="index"><span itemprop="name">性能优化</span></a>
+                </span>
+            </span>
+
+          <br>
+            <span class="post-meta-item" title="本文字数">
+              <span class="post-meta-item-icon">
+                <i class="far fa-file-word"></i>
+              </span>
+                <span class="post-meta-item-text">本文字数：</span>
+              <span>4.2k</span>
+            </span>
+            <span class="post-meta-item" title="阅读时长">
+              <span class="post-meta-item-icon">
+                <i class="far fa-clock"></i>
+              </span>
+                <span class="post-meta-item-text">阅读时长 &asymp;</span>
+              <span>4 分钟</span>
+            </span>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="引言"><a href="#引言" class="headerlink" title="引言"></a>引言</h2><p>前面把 I&#x2F;O 栈和指标口径铺开了，这篇专门走定位与优化。现象还是本篇锚点那组：CPU 三成、P99 从 40 毫秒涨到 800 毫秒，只是这次瓶颈落在磁盘上——应用发出 I&#x2F;O 后挂起等待，iowait 冒高，算力闲着。I&#x2F;O 类问题的难处不在工具少，而在几个案例长得很像：都是响应慢、都是 iowait 高，根因却可能是狂打日志、临时文件、慢查询或持久化配置。这篇把「iostat 定瓶颈、pidstat 找进程、strace 和 lsof 定位文件」这条主线走实，再交代 fio 基准与几种优化手段的代价。</p>
+<span id="more"></span>
+
+<h2 id="await-util-与队列深度"><a href="#await-util-与队列深度" class="headerlink" title="await util 与队列深度"></a>await util 与队列深度</h2><p>判断磁盘有没有瓶颈，先看几个数的含义。<code>%util</code> 是磁盘处理 I&#x2F;O 的时间占比，超过八成通常就算有瓶颈；<code>r/s + w/s</code> 是 IOPS，<code>rkB/s + wkB/s</code> 是吞吐量，<code>r_await + w_await</code> 是响应时间，<code>aqu-sz</code> 是平均请求队列长度。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%80%A7%E8%83%BD%E6%8C%87%E6%A0%87%E8%84%91%E5%9B%BE.png" alt="文件系统与磁盘 I/O 性能指标脑图"></p>
+<p>这几个数得合起来看。使用率只统计「有没有 I&#x2F;O」，不管请求多大，所以 <code>%util</code> 到 100% 时磁盘仍可能接受新请求——这个数只描述繁忙时间占比。磁盘何时接不了新请求，要看饱和度；iostat 不直接给饱和度，拿 <code>aqu-sz</code> 或等待时间跟 fio 的基准结果比，才能估出来。</p>
+<p>请求大小也关键。数据库、小文件这类随机读写场景，IOPS 更能反映性能；多媒体这类顺序读写场景，吞吐量才更能反映。同样一块盘，4 KB 随机写和 1 MB 顺序写跑出来的 <code>%util</code> 可能都是 99%，但每请求的处理能力和队列深度会差出一大截，脱离读写类型、比例和大小去比较单个指标，很容易得出错的结论。</p>
+<p>所以要谈「磁盘够不够快」，先得有个基准值。fio 是最常用的基准测试工具，通过选项组合覆盖各种场景：<code>rw</code> 指定读写模式，read&#x2F;write 是顺序、randread&#x2F;randwrite 是随机；<code>bs</code> 设块大小；<code>ioengine</code> 选引擎，libaio 表示异步；<code>direct=1</code> 绕过系统缓存，测的是磁盘本身；<code>filename</code> 指向裸盘或文件，测裸盘会破坏上面的文件系统，事先得备份。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">$ fio -name=randread -direct=1 -iodepth=64 -rw=randread -ioengine=libaio \</span><br><span class="line">      -bs=4k -size=1G -numjobs=1 -runtime=1000 -group_reporting -filename=/dev/sdb</span><br></pre></td></tr></table></figure>
+
+<p>报告里的 IOPS、带宽、延迟分位数，就是这个盘在该场景下的极限。拿它当基线，线上观测到的队列长度和等待时间才有得比——否则「await 7 秒算高吗」这种问题没有答案。同一块盘，换块大小、换随机顺序，测出来的数会差出几倍，基准得贴着应用的真实 I&#x2F;O 特征来测。</p>
+<h2 id="从-iowait-追到写日志线程"><a href="#从-iowait-追到写日志线程" class="headerlink" title="从 iowait 追到写日志线程"></a>从 iowait 追到写日志线程</h2><p>看一个狂打日志的例子。应用跑起来后，top 里 CPU0 的 iowait 超过 90%，进程列表里 python 进程 CPU 只有 6%，不算高；内存 8 GB 里缓存占了 6 GB。iowait 高说明 CPU 在等 I&#x2F;O，方向转到磁盘。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ iostat -x -d 1</span><br><span class="line">Device r/s w/s rkB/s wkB/s r_await w_await aqu-sz rareq-sz wareq-sz %util</span><br><span class="line">sda    0.0 64.0  0.0 32768  0.0   7270    1102   0.0    512      99.2</span><br></pre></td></tr></table></figure>
+
+<p>每秒写 64 次、32 MB，写响应 7 秒，队列长度 1100——%util 99% 配合这么长的队列，磁盘已经饱和。下一步用 pidstat -d 找出是谁在写。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">$ pidstat -d 1</span><br><span class="line">15:08:36 0 18940 0.00 45816.00 0.00 96 python</span><br><span class="line">15:08:37 0   354 0.00     0.00 0.00 350 jbd2/sda1-8</span><br><span class="line">15:08:37 0 20065 0.00     0.00 0.00 1503 kworker/u4:2</span><br></pre></td></tr></table></figure>
+
+<p>python 每秒写 45 MB，是整盘 32 MB 的写出者。有意思的是 jbd2 和 kworker 的 iodelay 更大，但它们是保证文件系统完整性的内核线程，延迟的根源还是那批大量 I&#x2F;O，顺着 python 往下查就行。用 strace 看它写的是什么。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">$ strace -p 18940</span><br><span class="line">write(3, <span class="string">&quot;2018-12-05 15:23:01,709 - __main&quot;</span>..., 314572844</span><br></pre></td></tr></table></figure>
+
+<p>写的是日志文件，一次写 300 MB。根因是调试日志级别忘了调回去，大量日志把磁盘写满了。另一个相似的案例里，strace 看不到 write——换成 filetop 和 opensnoop 从内核态追踪，才发现应用在读写大量临时文件。工具没有结果时，先怀疑工具用法，别急着下没有 I&#x2F;O 的结论。</p>
+<pre class="mermaid">
+flowchart TD
+    A[&quot;top: iowait 高&quot;] --&gt; B[&quot;iostat 定磁盘瓶颈&quot;]
+    B --&gt; C[&quot;pidstat -d 找 I&#x2F;O 进程&quot;]
+    C --&gt; D[&quot;strace &#x2F; lsof 定位文件&quot;]
+    D --&gt; E{&quot;strace 无结果&quot;}
+    E --&gt;|&quot;是&quot;| F[&quot;filetop &#x2F; opensnoop 内核态追踪&quot;]
+    E --&gt;|&quot;否&quot;| G[&quot;结合文件与进程原理定位根因&quot;]
+    F --&gt; G
+</pre>
+
+<h2 id="iostat-strace-与-lsof"><a href="#iostat-strace-与-lsof" class="headerlink" title="iostat strace 与 lsof"></a>iostat strace 与 lsof</h2><p>这条链上每个工具管一段，界限清楚才不会用错。</p>
+<p><code>/proc/diskstats</code> 是 iostat 的数据源，按设备给出读写请求数、合并数、读写的字节数和耗时。iostat 把这些原始计数换算成人能读的指标，看整盘够不够用；它回答不了「是谁在读写」，这要 pidstat -d 或 iotop 补——前者给每个进程的读写速率和 iodelay，后者按 I&#x2F;O 大小排序找大户。</p>
+<p>strace 跟踪进程的系统调用，能看到 <code>openat</code>、<code>read</code>、<code>write</code> 作用在哪个文件描述符上；lsof 则把文件描述符还原成路径，两者配合才知道进程在读写哪个文件。多线程进程要加 <code>-f</code>，否则可能一条 write 都看不到。</p>
+<p><img data-src="https://pictures-blog.oss-cn-beijing.aliyuncs.com/pic_bed/Linux%E6%80%A7%E8%83%BD-09-IO%E6%8C%87%E6%A0%87%E6%89%BE%E5%B7%A5%E5%85%B7%E8%A1%A8.png" alt="根据 I/O 性能指标找观测工具"></p>
+<p>当进程在容器里、strace 又看不出问题时，filetop 和 opensnoop 从内核态跟踪读写文件和打开文件，能补上这一层。要追到块设备这一级，用 blktrace 及配套的 blkparse，看请求在 I&#x2F;O 路径各阶段的耗时。</p>
+<figure class="highlight sh"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">$ strace -f -T -tt -p 9085</span><br><span class="line">$ lsof -p 9085</span><br><span class="line">redis-ser 9085 ... 7w REG 8,1 8830146 2838532 /data/appendonly.aof</span><br></pre></td></tr></table></figure>
+
+<p>MySQL 和 Redis 的案例就是这么走的：pidstat 锁定 mysqld 或 redis-server，strace 加 lsof 找出操作的文件，再结合数据库引擎或持久化原理推断根因——一个是没走索引的慢查询，一个是 AOF 持久化配置不当加上客户端通信过频。</p>
+<h2 id="util-满就换盘的缺口"><a href="#util-满就换盘的缺口" class="headerlink" title="util 满就换盘的缺口"></a>util 满就换盘的缺口</h2><p><code>%util</code> 到 100% 常被直接当成换盘信号，但这一步跳过了太多东西。几种常见的走偏：</p>
+<ol>
+<li><strong>只看使用率就换盘</strong>。%util 统计繁忙时间，不反映请求大小和队列深度；先看 <code>aqu-sz</code> 和 <code>await</code>，再结合 IOPS、吞吐和读写类型判断是真瓶颈还是短暂突发。</li>
+<li><strong>拿 top 的单次结果下结论</strong>。iowait 高只说明 CPU 在等 I&#x2F;O，得用 iostat 和 pidstat 确认磁盘真的忙、并找出写出者，否则可能把缓存回收或 Swap 换页当成磁盘问题。</li>
+<li><strong>strace 没看到 write 就判定没 I&#x2F;O</strong>。多线程不加 <code>-f</code>、容器内外路径不一致，都会让追踪失真；换 filetop 或 opensnoop 再从内核态核一遍。</li>
+<li><strong>不测基准就设优化目标</strong>。IOPS、吞吐要多少才算够，得先用 fio 在相同配置下测出极限值，否则优化完了也说不清是否达标。</li>
+</ol>
+<p>也有不必深究的时候：iostat 显示 %util 接近零、await 稳定在低位，这时延迟和 I&#x2F;O 无关，回到 CPU 或应用逻辑上查。反过来，若 iostat 忙而 pidstat 里大多是内核线程，方向就转到内存——Swap 换页和缓存回收都会制造大量磁盘 I&#x2F;O，症结在那边。</p>
+<h2 id="I-x2F-O-瓶颈定位速查表"><a href="#I-x2F-O-瓶颈定位速查表" class="headerlink" title="I&#x2F;O 瓶颈定位速查表"></a>I&#x2F;O 瓶颈定位速查表</h2><table>
+<thead>
+<tr>
+<th>现象</th>
+<th>关键读数</th>
+<th>下一步工具</th>
+<th>处置方向与代价</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>iowait 高</td>
+<td>top wa 占大头</td>
+<td>iostat 确认磁盘瓶颈</td>
+<td>先确认是真 I&#x2F;O 还是换页</td>
+</tr>
+<tr>
+<td>磁盘饱和</td>
+<td>%util 高、aqu-sz 长</td>
+<td>pidstat -d 找进程</td>
+<td>按读写类型判断，别直接换盘</td>
+</tr>
+<tr>
+<td>写出者不明</td>
+<td>pidstat 只有内核线程</td>
+<td>转查 Swap 与内存回收</td>
+<td>调内存，代价在回收压力</td>
+</tr>
+<tr>
+<td>进程 I&#x2F;O 大</td>
+<td>pidstat -d 某进程居首</td>
+<td>strace -f 加 lsof 定位文件</td>
+<td>改日志级别或缓存策略</td>
+</tr>
+<tr>
+<td>strace 无结果</td>
+<td>看不到 write</td>
+<td>filetop &#x2F; opensnoop</td>
+<td>内核态追踪，需 bcc 工具</td>
+</tr>
+<tr>
+<td>随机读写为主</td>
+<td>IOPS 高、请求小</td>
+<td>fio 测 4K 随机基准</td>
+<td>调调度或合并请求</td>
+</tr>
+<tr>
+<td>顺序读写为主</td>
+<td>吞吐高、请求大</td>
+<td>fio 测大块顺序基准</td>
+<td>看预读与带宽上限</td>
+</tr>
+</tbody></table>
+<p>本篇锚点的 CPU 三成、P99 800 毫秒，落在「iowait 高、应用在等 I&#x2F;O」这一格。按主线先 iostat 确认磁盘饱和，再 pidstat 找写出者，然后 strace 加 lsof 定位文件；确认是日志、临时文件还是数据库访问，才谈调级别、改缓存还是建索引。顺序反了，改的参数多半留在机器上却解释不了延迟。</p>
+<h2 id="小结与参考"><a href="#小结与参考" class="headerlink" title="小结与参考"></a>小结与参考</h2><p>I&#x2F;O 瓶颈看使用率、IOPS、吞吐、响应时间，配合请求大小和队列深度一起判断；%util 是繁忙时间占比，到 100% 时照样可能接受新请求。定位按 iostat 定瓶颈、pidstat 找进程、strace 加 lsof 定位文件的顺序走，strace 看不到的改用 filetop 和 opensnoop，多线程记得加 -f。日志狂打、临时文件、慢查询、持久化配置不当都会落到同一组现象上，根因要靠工具和原理共同确认；优化前先用 fio 在相同配置下测出基准，再选调日志、缓存、索引还是调度，别拿单个指标直接下换盘的结论。</p>
+<p><strong>参考</strong></p>
+<ul>
+<li>极客时间《Linux 性能优化实战》</li>
+<li>Brendan Gregg《Systems Performance: Enterprise and the Cloud》</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Zang JinFeng
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://xssdpgy.github.io/2023/08/25/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E4%B9%9D%EF%BC%89IO%20%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E4%B8%8E%E4%BC%98%E5%8C%96/" title="Linux 性能（九）I O 瓶颈定位与优化">https://xssdpgy.github.io/2023/08/25/Linux 性能（九）IO 瓶颈定位与优化/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Linux/" rel="tag"># Linux</a>
+              <a href="/tags/%E6%80%A7%E8%83%BD%E5%88%86%E6%9E%90/" rel="tag"># 性能分析</a>
+              <a href="/tags/%E7%A3%81%E7%9B%98-I-O/" rel="tag"># 磁盘 I/O</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2023/08/23/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%85%AB%EF%BC%89%E6%96%87%E4%BB%B6%E7%B3%BB%E7%BB%9F%E4%B8%8E%E7%A3%81%E7%9B%98%20IO%20%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86/" rel="prev" title="Linux 性能（八）文件系统与磁盘 I/O 工作原理">
+      <i class="fa fa-chevron-left"></i> Linux 性能（八）文件系统与磁盘 I/O 工作原理
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2023/08/30/Linux%20%E6%80%A7%E8%83%BD%EF%BC%88%E5%8D%81%EF%BC%89%E7%BD%91%E7%BB%9C%E5%8D%8F%E8%AE%AE%E6%A0%88%E4%B8%8E%E6%80%A7%E8%83%BD%E8%AF%84%E4%BC%B0/" rel="next" title="Linux 性能（十）网络协议栈与性能评估">
+      Linux 性能（十）网络协议栈与性能评估 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="gitalk-container"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E8%A8%80"><span class="nav-text">引言</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#await-util-%E4%B8%8E%E9%98%9F%E5%88%97%E6%B7%B1%E5%BA%A6"><span class="nav-text">await util 与队列深度</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%BB%8E-iowait-%E8%BF%BD%E5%88%B0%E5%86%99%E6%97%A5%E5%BF%97%E7%BA%BF%E7%A8%8B"><span class="nav-text">从 iowait 追到写日志线程</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#iostat-strace-%E4%B8%8E-lsof"><span class="nav-text">iostat strace 与 lsof</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#util-%E6%BB%A1%E5%B0%B1%E6%8D%A2%E7%9B%98%E7%9A%84%E7%BC%BA%E5%8F%A3"><span class="nav-text">util 满就换盘的缺口</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#I-x2F-O-%E7%93%B6%E9%A2%88%E5%AE%9A%E4%BD%8D%E9%80%9F%E6%9F%A5%E8%A1%A8"><span class="nav-text">I&#x2F;O 瓶颈定位速查表</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93%E4%B8%8E%E5%8F%82%E8%80%83"><span class="nav-text">小结与参考</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Zang JinFeng"
+      src="/images/avatar.gif">
+  <p class="site-author-name" itemprop="name">Zang JinFeng</p>
+  <div class="site-description" itemprop="description">Stay hungry, Stay foolish.</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">57</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">7</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">56</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/xssdpgy" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;xssdpgy" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="/atom.xml" title="RSS → &#x2F;atom.xml"><i class="fas fa-rss fa-fw"></i>RSS</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+  <div class="links-of-blogroll motion-element">
+    <div class="links-of-blogroll-title"><i class="fa fa-link fa-fw"></i>
+      Links
+    </div>
+    <ul class="links-of-blogroll-list">
+        <li class="links-of-blogroll-item">
+          <a href="https://www.cnblogs.com/zjfjava" title="https:&#x2F;&#x2F;www.cnblogs.com&#x2F;zjfjava" rel="noopener" target="_blank">博客园</a>
+        </li>
+    </ul>
+  </div>
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2026</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Zang JinFeng</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/jquery/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/lozad/lozad.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+<script>
+if (document.querySelectorAll('pre.mermaid').length) {
+  NexT.utils.getScript('/lib/mermaid/mermaid.min.js', () => {
+    mermaid.initialize({
+      startOnLoad    : false,
+      theme          : 'neutral',
+      logLevel       : 3,
+      themeVariables : {
+        fontFamily : '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+        fontSize   : '14px'
+      },
+      flowchart      : { curve: 'basis', htmlLabels: true, padding: 12, nodeSpacing: 42, rankSpacing: 48, useMaxWidth: true },
+      gantt          : { axisFormat: '%m/%d/%Y' },
+      sequence       : { actorMargin: 50, useMaxWidth: true }
+    });
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({ querySelector: 'pre.mermaid' });
+    } else {
+      mermaid.init(undefined, document.querySelectorAll('pre.mermaid'));
+    }
+  }, window.mermaid);
+}
+</script>
+
+
+  
+
+  
+
+<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.css">
+
+<script>
+NexT.utils.loadComments(document.querySelector('#gitalk-container'), () => {
+  NexT.utils.getScript('//cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js', () => {
+    var gitalk = new Gitalk({
+      clientID    : '809f04d91ac7f21908f6',
+      clientSecret: 'e2ff4b3b8b9d23f407d1fccc0274883363dafdce',
+      repo        : 'blog-comments',
+      owner       : 'xssdpgy',
+      admin       : ['xssdpgy'],
+      id          : '36e3ab0b219664a373196730fe490c9d',
+        language: 'zh-CN',
+      distractionFreeMode: true
+    });
+    gitalk.render('gitalk-container');
+  }, window.Gitalk);
+});
+</script>
+
+</body>
+</html>
